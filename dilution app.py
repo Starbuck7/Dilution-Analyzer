@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 import re
 
 # -------------------- Config --------------------
-USER_AGENT = {"User-Agent": "Your Name (youremail@example.com)"}
+USER_AGENT = {"User-Agent": "Ashley (ashleymcgavern@yahoo.com)"}
 
 # -------------------- Utility Functions --------------------
 def get_cik_from_ticker(ticker):
