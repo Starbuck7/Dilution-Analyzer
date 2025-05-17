@@ -220,4 +220,73 @@ def estimate_offering_ability(cik):
 
 
 # -------------------- Streamlit App --------------------
-# [Streamlit code continues unchanged...]
+st.title("Stock Analysis Dashboard")
+st.markdown("Analyze dilution and financial health based on SEC filings.")
+
+# Input ticker
+ticker = st.text_input("Enter a stock ticker (e.g., SYTA)", "").strip().upper()
+
+if ticker:
+    cik = get_cik_from_ticker(ticker)
+    if not cik:
+        st.error("CIK not found for this ticker.")
+    else:
+        st.success(f"CIK found: {cik}")
+
+        # Market Cap
+        market_cap = get_market_cap(ticker)
+        st.subheader("1. Market Cap")
+        st.write(f"${market_cap:,.0f}" if market_cap else "Not available")
+
+        # Cash Runway
+        cash, burn = get_cash_and_burn(cik)
+        runway = calculate_cash_runway(cash, burn)
+        st.subheader("2. Cash Runway")
+        if cash and burn:
+            st.write(f"Cash: ${cash:,.0f}")
+            st.write(f"Monthly Burn: ${burn:,.0f}")
+            st.write(f"Runway: {runway:.1f} months")
+        else:
+            st.write("Cash or burn rate not found.")
+
+        # ATM Offering
+        atm, atm_url = get_atm_offering(cik)
+        st.subheader("3. ATM Offering Capacity")
+        if atm:
+            st.write(f"${atm:,.0f}")
+            st.markdown(f"[Source Document]({atm_url})")
+        else:
+            st.write("No ATM filing found.")
+
+        # Authorized vs Outstanding
+        authorized = get_authorized_shares(cik)
+        outstanding = get_outstanding_shares(cik)
+        st.subheader("4. Authorized vs Outstanding Shares")
+        st.write(f"Authorized Shares: {authorized:,}" if authorized else "Not found")
+        st.write(f"Outstanding Shares: {outstanding:,}" if outstanding else "Not found")
+
+        # Convertibles & Warrants
+        instruments, cw_url = get_convertibles_and_warrants(cik)
+        st.subheader("5. Convertibles and Warrants")
+        if instruments:
+            st.write(", ".join(set(instruments)))
+            st.markdown(f"[Source Document]({cw_url})")
+        else:
+            st.write("No convertible instruments or warrants detected.")
+
+        # Historical Capital Raises
+        raises = get_historical_capital_raises(cik)
+        st.subheader("6. Historical Capital Raises")
+        if raises:
+            for entry in raises:
+                st.write(f"- {entry['form']} on {entry['date']}: ${entry['amount']:,.0f}")
+                st.markdown(f"[Filing]({entry['url']})")
+        else:
+            st.write("No historical raises found.")
+
+        # Offering Ability
+        offering_data = estimate_offering_ability(cik)
+        st.subheader("7. Offering Ability")
+        for k, v in offering_data.items():
+            st.write(f"{k}: {v:,.0f}" if isinstance(v, (int, float)) else f"{k}: {v}")
+
