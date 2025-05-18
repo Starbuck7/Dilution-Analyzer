@@ -27,6 +27,7 @@ def get_cash_and_burn(cik):
     url = f"https://data.sec.gov/submissions/CIK{cik}.json"
     res = requests.get(url, headers=USER_AGENT).json()
     filings = res.get("filings", {}).get("recent", {})
+    
     for i, form in enumerate(filings.get("form", [])):
         if form in ["10-Q", "10-K"]:
             accession = filings["accessionNumber"][i].replace("-", "")
@@ -34,16 +35,23 @@ def get_cash_and_burn(cik):
             html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
             html = requests.get(html_url, headers=USER_AGENT).text
             text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
+            
+            # Get cash and cash equivalents
             cash_match = re.search(r"cash and cash equivalents[^$]*\$?([0-9.]+)", text, re.IGNORECASE)
-            burn_match = re.search(r"monthly burn rate[^$]*\$?([0-9.]+)", text, re.IGNORECASE)
-            if cash_match and burn_match:
-                return float(cash_match.group(1)), float(burn_match.group(1))
-    return None, None
+            cash = float(cash_match.group(1)) if cash_match else None
 
-def calculate_cash_runway(cash, burn):
-    if cash and burn:
-        return cash / burn
-    return None
+            # Estimate burn rate from net cash used in operating activities
+            burn_match = re.search(r"net cash used in operating activities[^$]*\$?([0-9.]+)", text, re.IGNORECASE)
+            burn = float(burn_match.group(1)) / 3 if burn_match else None
+
+            if cash and burn:
+                return cash, burn
+            if not cash:
+                st.warning("Cash value not found in recent filings.")
+            if not burn:
+                st.warning("Burn rate could not be estimated.")
+
+        return None, None
 
 # -------------------- Module 3: ATM Offering Capacity --------------------
 def get_atm_offering(cik):
