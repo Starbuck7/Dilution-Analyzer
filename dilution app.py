@@ -515,7 +515,7 @@ if ticker:
        # Calculate dilution score
         try:
             score = calculate_dilution_pressure_score(
-                atm_capacity,
+                atm_capacity_score,
                 convertibles_and_warrants,
                 total_raises,
                 market_cap,
