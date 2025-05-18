@@ -181,7 +181,7 @@ def get_historical_capital_raises(cik):
             html_res = requests.get(html_url, headers=USER_AGENT)
             if html_res.status_code != 200:
                 continue
-            soup = BeautifulSoup(html_res.text, "lxml")
+            soup = BeautifulSoup(html, "lxml")
             text = soup.get_text().replace(",", "").lower()
 
             found_amount = None
