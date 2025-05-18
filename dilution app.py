@@ -3,6 +3,10 @@ import yfinance as yf
 import requests
 from bs4 import BeautifulSoup
 import re
+import warnings
+from bs4 import XMLParsedAsHTMLWarning
+
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 # -------------------- Config --------------------
 USER_AGENT = {"User-Agent": "Ashley (ashleymcgavern@yahoo.com)"}
@@ -181,7 +185,7 @@ def get_historical_capital_raises(cik):
             html_res = requests.get(html_url, headers=USER_AGENT)
             if html_res.status_code != 200:
                 continue
-            soup = BeautifulSoup(html, "lxml")
+            soup = BeautifulSoup(xml_data, "xml")
             text = soup.get_text().replace(",", "").lower()
 
             found_amount = None
