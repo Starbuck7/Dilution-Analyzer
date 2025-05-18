@@ -394,3 +394,33 @@ if ticker:
         for k, v in offering_data.items():
             st.write(f"{k}: {v:,.0f}" if isinstance(v, (int, float)) else f"{k}: {v}")
 
+        # Example usage after gathering all values
+        runway = calculate_cash_runway(cash, burn)  # from your logic
+        atm_score = atm_capacity_score  # you may need to map it to 0–20 scale
+        convert_score = convertibles_score  # 0–15
+        raise_score = raises_score         # 0–15
+
+        # Optional red flag: e.g., check for 'going concern' warning or other signs
+        red_flags_score = 0
+
+        score, risk_level = calculate_dilution_pressure_score(
+            runway_months=runway,
+            atm_capacity_score=atm_score,
+            authorized_shares=authorized,
+            outstanding_shares=outstanding,
+            convertibles_score=convert_score,
+            raises_score=raise_score,
+            market_cap=market_cap,
+            public_float=public_float,
+            red_flags_score=red_flags_score
+        )
+
+st.subheader("8. Dilution Pressure Score")
+st.metric("Score", f"{score}/100", delta=None)
+st.markdown(f"**Dilution Risk Level:** :red[{risk_level}]")
+risk_emoji = "🟢" if risk_level == "LOW" else "🟠" if risk_level == "MEDIUM" else "🔴"
+st.markdown(f"### {risk_emoji} Dilution Risk: **{risk_level}** ({score}/100)")
+
+
+
+
