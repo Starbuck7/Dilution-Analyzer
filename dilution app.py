@@ -24,6 +24,11 @@ def get_market_cap(ticker):
 
 # -------------------- Module 2: Cash Runway --------------------
 def get_cash_and_burn(cik):
+    def calculate_cash_runway(cash, burn):
+    if cash and burn:
+        return cash / burn
+    return None
+
     url = f"https://data.sec.gov/submissions/CIK{cik}.json"
     res = requests.get(url, headers=USER_AGENT).json()
     filings = res.get("filings", {}).get("recent", {})
