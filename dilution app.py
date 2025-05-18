@@ -136,13 +136,13 @@ def get_outstanding_shares(cik):
                 if match:
                     return int(match.group(1))
         return None
-           # Expanded regex to match various phrasings
-                patterns = [
-                    r"(?i)shares\s+issued\s+and\s+outstanding[^0-9]+([0-9,]+)",
-                    r"(?i)common\s+shares\s+outstanding[^0-9]+([0-9,]+)",
-                    r"(?i)total\s+shares\s+outstanding[^0-9]+([0-9,]+)",
-                    r"(?i)shares\s+outstanding[^0-9]+([0-9,]+)"
-                ]
+        # Expanded regex to match various phrasings
+        patterns = [
+                r"(?i)shares\s+issued\s+and\s+outstanding[^0-9]+([0-9,]+)",
+                r"(?i)common\s+shares\s+outstanding[^0-9]+([0-9,]+)",
+                r"(?i)total\s+shares\s+outstanding[^0-9]+([0-9,]+)",
+                r"(?i)shares\s+outstanding[^0-9]+([0-9,]+)"
+        ]
 
                 for pattern in patterns:
                     match = re.search(pattern, text)
