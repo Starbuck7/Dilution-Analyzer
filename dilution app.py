@@ -118,6 +118,8 @@ def get_convertibles_and_warrants(cik):
 
 # -------------------- Module 6: Historical Capital Raises --------------------
 def get_historical_capital_raises(cik):
+    import math
+
     url = f"https://data.sec.gov/submissions/CIK{cik}.json"
     res = requests.get(url, headers=USER_AGENT)
     if res.status_code != 200:
@@ -125,6 +127,14 @@ def get_historical_capital_raises(cik):
     data = res.json()
     filings = data.get("filings", {}).get("recent", {})
     capital_raises = []
+
+    patterns = [
+        r"offering (?:of|for).*?\$?([0-9.,]+)\s?(million|thousand|billion)?",
+        r"aggregate proceeds.*?\$?([0-9.,]+)\s?(million|thousand|billion)?",
+        r"gross proceeds.*?\$?([0-9.,]+)\s?(million|thousand|billion)?",
+        r"sale of.*?\$?([0-9.,]+)\s?(million|thousand|billion)?",
+    ]
+
     for i, form in enumerate(filings.get("form", [])):
         if form in ["S-1", "S-3", "424B5", "8-K"]:
             accession = filings["accessionNumber"][i].replace("-", "")
@@ -135,22 +145,36 @@ def get_historical_capital_raises(cik):
             if html_res.status_code != 200:
                 continue
             soup = BeautifulSoup(html_res.text, "lxml")
-            text = soup.get_text().replace(",", "")
-            match = re.search(r"offering of.*?\$?([0-9.]+)\s?(million|thousand)?", text, re.IGNORECASE)
-            if match:
-                amount = float(match.group(1))
-                unit = match.group(2)
-                if unit == "million":
-                    amount *= 1_000_000
-                elif unit == "thousand":
-                    amount *= 1_000
+            text = soup.get_text().replace(",", "").lower()
+
+            found_amount = None
+            for pattern in patterns:
+                match = re.search(pattern, text)
+                if match and match.group(1):
+                    try:
+                        amount = float(match.group(1).replace(",", ""))
+                        unit = match.group(2)
+                        if unit == "billion":
+                            amount *= 1_000_000_000
+                        elif unit == "million":
+                            amount *= 1_000_000
+                        elif unit == "thousand":
+                            amount *= 1_000
+                        found_amount = amount
+                        break
+                    except (ValueError, TypeError):
+                        continue
+
+            if found_amount:
                 capital_raises.append({
                     "form": form,
                     "date": filing_date,
-                    "amount": amount,
+                    "amount": found_amount,
                     "url": html_url
                 })
-    return capital_raises
+
+    return capital_raises if capital_raises else None
+
 
 # -------------------- Module 7: Get Public Float ---------------------
 
