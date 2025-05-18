@@ -144,8 +144,8 @@ def get_outstanding_shares(cik):
                 r"(?i)shares\s+outstanding[^0-9]+([0-9,]+)"
         ]
 
-                for pattern in patterns:
-                    match = re.search(pattern, text)
+            for pattern in patterns:
+                match = re.search(pattern, text)
                     if match:
                         return int(match.group(1).replace(",", ""))
     except Exception as e:
