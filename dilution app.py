@@ -132,22 +132,23 @@ def get_outstanding_shares(cik):
                 html = requests.get(html_url, headers=USER_AGENT).text
                 text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
 
+                # Try primary pattern
                 match = re.search(r"(?:common\s+stock\s+)?outstanding\s+(?:shares|stock)[^0-9]{0,20}([0-9]{3,})", text, re.IGNORECASE)
                 if match:
                     return int(match.group(1))
-        return None
-        # Expanded regex to match various phrasings
-        patterns = [
-                r"(?i)shares\s+issued\s+and\s+outstanding[^0-9]+([0-9,]+)",
-                r"(?i)common\s+shares\s+outstanding[^0-9]+([0-9,]+)",
-                r"(?i)total\s+shares\s+outstanding[^0-9]+([0-9,]+)",
-                r"(?i)shares\s+outstanding[^0-9]+([0-9,]+)"
-        ]
 
-            for pattern in patterns:
-                match = re.search(pattern, text)
+                # Fallback: try additional phrasing patterns
+                patterns = [
+                    r"(?i)shares\s+issued\s+and\s+outstanding[^0-9]+([0-9,]+)",
+                    r"(?i)common\s+shares\s+outstanding[^0-9]+([0-9,]+)",
+                    r"(?i)total\s+shares\s+outstanding[^0-9]+([0-9,]+)",
+                    r"(?i)shares\s+outstanding[^0-9]+([0-9,]+)"
+                ]
+                for pattern in patterns:
+                    match = re.search(pattern, text)
                     if match:
                         return int(match.group(1).replace(",", ""))
+        return None
     except Exception as e:
         print(f"Error in get_outstanding_shares: {e}")
         return None
