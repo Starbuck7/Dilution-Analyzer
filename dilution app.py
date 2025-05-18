@@ -28,28 +28,34 @@ def get_market_cap(ticker):
 
 # -------------------- Module 2: Cash Runway --------------------
 def get_cash_and_burn(cik):
+    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
     try:
-        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-        res = requests.get(url, headers={"User-Agent": "Your Name (youremail@example.com)"})
+        res = requests.get(url, headers=USER_AGENT)
         if res.status_code != 200:
             return None, None
-        filings = res.json().get("filings", {}).get("recent", {})
-        for i, form in enumerate(filings.get("form", [])):
+        data = res.json()
+        filings = data.get("filings", {}).get("recent", {})
+        forms = filings.get("form", [])
+        accessions = filings.get("accessionNumber", [])
+        docs = filings.get("primaryDocument", [])
+        for i, form in enumerate(forms):
+            if i >= len(accessions) or i >= len(docs):
+                continue
             if form in ["10-Q", "10-K"]:
-                accession = filings["accessionNumber"][i].replace("-", "")
-                doc = filings["primaryDocument"][i]
+                accession = accessions[i].replace("-", "")
+                doc = docs[i]
                 html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-                html_res = requests.get(html_url, headers={"User-Agent": "Your Name (youremail@example.com)"})
-                if html_res.status_code != 200:
-                    continue
-                text = BeautifulSoup(html_res.text, "lxml").get_text().replace(",", "")
-                cash_match = re.search(r"cash and cash equivalents[^$]*\$?([0-9.]+)", text, re.IGNORECASE)
-                burn_match = re.search(r"monthly burn rate[^$]*\$?([0-9.]+)", text, re.IGNORECASE)
-                if cash_match and burn_match:
-                    return float(cash_match.group(1)), float(burn_match.group(1))
+                html = requests.get(html_url, headers=USER_AGENT).text
+                text = BeautifulSoup(html, "lxml").get_text().replace(",", "").lower()
+                cash_match = re.search(r"cash and cash equivalents[^$0-9]{0,20}\$?([0-9.]+)", text)
+                burn_match = re.search(r"(monthly burn rate|net cash used in operating activities)[^$0-9]{0,20}\$?([0-9.]+)", text)
+                cash = float(cash_match.group(1)) if cash_match else None
+                burn = float(burn_match.group(2)) / 3 if burn_match and "operating" in burn_match.group(1) else float(burn_match.group(2)) if burn_match else None
+                return cash, burn
     except Exception as e:
         print(f"Error in get_cash_and_burn: {e}")
     return None, None
+
 
 def calculate_cash_runway(cash, burn):
     if cash and burn:
@@ -77,44 +83,80 @@ def get_atm_offering(cik):
 # -------------------- Module 4: Authorized vs Outstanding Shares --------------------
 def get_authorized_shares(cik):
     url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-    res = requests.get(url, headers=USER_AGENT).json()
-    filings = res.get("filings", {}).get("recent", {})
-    for i, form in enumerate(filings.get("form", [])):
-        if form == "DEF 14A":
-            accession = filings["accessionNumber"][i].replace("-", "")
-            doc = filings["primaryDocument"][i]
-            html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-            html = requests.get(html_url, headers=USER_AGENT).text
-            text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
-            match = re.search(r"authorized\s+shares[^0-9]+([0-9]+)", text, re.IGNORECASE)
-            if match:
-                return int(match.group(1))
+    try:
+        res = requests.get(url, headers=USER_AGENT)
+        if res.status_code != 200:
+            return None
+        data = res.json()
+        filings = data.get("filings", {}).get("recent", {})
+        forms = filings.get("form", [])
+        accessions = filings.get("accessionNumber", [])
+        docs = filings.get("primaryDocument", [])
+        for i, form in enumerate(forms):
+            if i >= len(accessions) or i >= len(docs):
+                continue
+            if form == "DEF 14A":
+                accession = accessions[i].replace("-", "")
+                doc = docs[i]
+                html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
+                html = requests.get(html_url, headers=USER_AGENT).text
+                text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
+                match = re.search(r"(?i)authorized\s+(?:number of\s+)?shares[^0-9]{0,20}([0-9]{3,})", text)
+                if match:
+                    return int(match.group(1))
+    except Exception as e:
+        print(f"Error in get_authorized_shares: {e}")
     return None
 
 def get_outstanding_shares(cik):
-    filings = res.get("filings", {}).get("recent", {})
-    forms = filings.get("form", [])
-    accessions = filings.get("accessionNumber", [])
-    docs = filings.get("primaryDocument", [])
-    dates = filings.get("filingDate", [])
-    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-    res = requests.get(url, headers=USER_AGENT).json()
-        
-    for i, form in enumerate(forms):
-        if i >= len(accessions) or i >= len(docs) or i >= len(dates):
-            continue  # Skip incomplete entries
+    try:
+        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+        res = requests.get(url, headers=USER_AGENT)
+        if res.status_code != 200:
+            return None
 
-        if form in [...]:
-            accession = accessions[i].replace("-", "")
-            doc = docs[i]
-            date = dates[i]  # if needed
-            html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-            html = requests.get(html_url, headers=USER_AGENT).text
-            text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
-            match = re.search(r"outstanding\s+shares[^0-9]+([0-9]+)", text, re.IGNORECASE)
-        if match:
-                return int(match.group(1))
+        filings = res.json().get("filings", {}).get("recent", {})
+        forms = filings.get("form", [])
+        accessions = filings.get("accessionNumber", [])
+        docs = filings.get("primaryDocument", [])
+        dates = filings.get("filingDate", [])
+
+        for i, form in enumerate(forms):
+            if i >= len(accessions) or i >= len(docs) or i >= len(dates):
+                continue  # Skip incomplete entries
+
+            if form in ["10-Q", "10-K", "DEF 14A"]:  # Expand if needed
+                accession = accessions[i].replace("-", "")
+                doc = docs[i]
+                html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
+                html = requests.get(html_url, headers=USER_AGENT).text
+                text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
+
+                match = re.search(r"(?:common\s+stock\s+)?outstanding\s+(?:shares|stock)[^0-9]{0,20}([0-9]{3,})", text, re.IGNORECASE)
+                if match:
+                    return int(match.group(1))
+        return None
+    except Exception as e:
+        print(f"Error in get_outstanding_shares: {e}")
+        return None
+
+                # Expanded regex to match various phrasings
+                patterns = [
+                    r"(?i)shares\s+issued\s+and\s+outstanding[^0-9]+([0-9,]+)",
+                    r"(?i)common\s+shares\s+outstanding[^0-9]+([0-9,]+)",
+                    r"(?i)total\s+shares\s+outstanding[^0-9]+([0-9,]+)",
+                    r"(?i)shares\s+outstanding[^0-9]+([0-9,]+)"
+                ]
+
+                for pattern in patterns:
+                    match = re.search(pattern, text)
+                    if match:
+                        return int(match.group(1).replace(",", ""))
+
+    except Exception as e:
+        print(f"Error in get_outstanding_shares: {e}")
     return None
+
 
 # -------------------- Module 5: Convertibles and Warrants --------------------
 def get_convertibles_and_warrants(cik):
