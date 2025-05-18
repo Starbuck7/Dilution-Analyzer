@@ -453,41 +453,41 @@ if ticker:
             st.write(f"{k}: {v:,.0f}" if isinstance(v, (int, float)) else f"{k}: {v}")
 
         # Gathering all values for Dilution Score
-       atm_capacity = atm if atm else 0
-       convertibles_and_warrants = len(instruments) if instruments else 0
-       total_raises = sum(entry["amount"] for entry in raises) if raises else 0
-       num_raises_past_year = len([
-           entry for entry in raises if datetime.strptime(entry["date"], "%Y-%m-%d") > datetime.now() - timedelta(days=365)
-       ]) if raises else 0
+        atm_capacity = atm if atm else 0
+        convertibles_and_warrants = len(instruments) if instruments else 0
+        total_raises = sum(entry["amount"] for entry in raises) if raises else 0
+        num_raises_past_year = len([
+            entry for entry in raises if datetime.strptime(entry["date"], "%Y-%m-%d") > datetime.now() - timedelta(days=365)
+        ]) if raises else 0
 
        # Optional red flag (for future expansion)
-       red_flags_score = 0
+        red_flags_score = 0
 
        # Calculate dilution score
-       try:
-           score = calculate_dilution_pressure_score(
-               atm_capacity,
-               convertibles_and_warrants,
-               total_raises,
-               market_cap,
-               num_raises_past_year,
-               red_flags_score
-           )
+        try:
+            score = calculate_dilution_pressure_score(
+                atm_capacity,
+                convertibles_and_warrants,
+                total_raises,
+                market_cap,
+                num_raises_past_year,
+                red_flags_score
+            )
 
-           st.subheader("8. Dilution Pressure Score")
-           if score is not None:
-               st.metric("Score (0-100)", f"{score}")
-               if score > 70:
-                   st.warning("⚠️ High Dilution Risk")
-               elif score > 40:
-                   st.info("🟡 Moderate Dilution Risk")
-               else:
-                   st.success("🟢 Low Dilution Risk")
-           else:
-               st.write("Insufficient data to calculate score.")
-       except Exception as e:
-           st.subheader("8. Dilution Pressure Score")
-           st.error(f"Error calculating score: {e}")
+            st.subheader("8. Dilution Pressure Score")
+            if score is not None:
+                st.metric("Score (0-100)", f"{score}")
+                if score > 70:
+                    st.warning("⚠️ High Dilution Risk")
+                elif score > 40:
+                    st.info("🟡 Moderate Dilution Risk")
+                else:
+                    st.success("🟢 Low Dilution Risk")
+            else:
+                st.write("Insufficient data to calculate score.")
+        except Exception as e:
+            st.subheader("8. Dilution Pressure Score")
+            st.error(f"Error calculating score: {e}")
 
 
 
