@@ -201,68 +201,60 @@ def get_convertibles_and_warrants(cik):
 
 # -------------------- Module 6: Historical Capital Raises --------------------
 def get_historical_capital_raises(cik):
-    import math
-    docs = filings.get("primaryDocument", [])
-    accessions = filings.get("accessionNumber", [])
-    dates = filings.get("filingDate", [])
-    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-    res = requests.get(url, headers=USER_AGENT)
-    if res.status_code != 200:
+    try:
+        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+        res = requests.get(url, headers=USER_AGENT)
+        if res.status_code != 200:
+            return None
+
+        filings = res.json().get("filings", {}).get("recent", {})
+        forms = filings.get("form", [])
+        accessions = filings.get("accessionNumber", [])
+        docs = filings.get("primaryDocument", [])
+        dates = filings.get("filingDate", [])
+
+        capital_raises = []
+
+        for i, form in enumerate(forms):
+            if form in ["8-K", "424B5", "S-1", "S-3"]:
+                if i >= len(accessions) or i >= len(docs) or i >= len(dates):
+                    continue  # Skip incomplete entries
+
+                accession = accessions[i].replace("-", "")
+                doc = docs[i]
+                date = dates[i]
+                html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
+                html = requests.get(html_url, headers=USER_AGENT).text
+                text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
+
+                # Look for language about capital raised
+                patterns = [
+                    r"gross\s+proceeds\s+of\s+\$?([0-9,]+(?:\.[0-9]{1,2})?)",
+                    r"raised\s+\$?([0-9,]+(?:\.[0-9]{1,2})?)",
+                    r"proceeds\s+of\s+\$?([0-9,]+(?:\.[0-9]{1,2})?)",
+                    r"offering\s+of\s+\$?([0-9,]+(?:\.[0-9]{1,2})?)"
+                ]
+
+                for pattern in patterns:
+                    match = re.search(pattern, text, re.IGNORECASE)
+                    if match:
+                        try:
+                            amount = float(match.group(1).replace(",", ""))
+                            capital_raises.append({
+                                "date": date,
+                                "form": form,
+                                "amount": amount,
+                                "url": html_url
+                            })
+                            break  # Stop after the first match
+                        except:
+                            continue
+
+        return capital_raises if capital_raises else None
+
+    except Exception as e:
+        print(f"Error in get_historical_capital_raises: {e}")
         return None
-    data = res.json()
-    filings = data.get("filings", {}).get("recent", {})
-    capital_raises = []
-
-    patterns = [
-        r"offering (?:of|for).*?\$?([0-9.,]+)\s?(million|thousand|billion)?",
-        r"aggregate proceeds.*?\$?([0-9.,]+)\s?(million|thousand|billion)?",
-        r"gross proceeds.*?\$?([0-9.,]+)\s?(million|thousand|billion)?",
-        r"sale of.*?\$?([0-9.,]+)\s?(million|thousand|billion)?",
-    ]
-
-    for i, form in enumerate(filings.get("form", [])):
-        if form in ["S-1", "S-3", "424B5", "8-K"]:
-            if i >= len(docs) or i >= len(accessions) or i >= len(dates):
-                continue  # Skip if any required field is missing
-
-            accession = accessions[i].replace("-", "")
-            doc = docs[i]
-            filing_date = dates[i]
-            html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-            html_res = requests.get(html_url, headers=USER_AGENT)
-            if html_res.status_code != 200:
-                continue
-            soup = BeautifulSoup(xml_data, "xml")
-            text = soup.get_text().replace(",", "").lower()
-
-            found_amount = None
-            for pattern in patterns:
-                match = re.search(pattern, text)
-                if match and match.group(1):
-                    try:
-                        amount = float(match.group(1).replace(",", ""))
-                        unit = match.group(2)
-                        if unit == "billion":
-                            amount *= 1_000_000_000
-                        elif unit == "million":
-                            amount *= 1_000_000
-                        elif unit == "thousand":
-                            amount *= 1_000
-                        found_amount = amount
-                        break
-                    except (ValueError, TypeError):
-                        continue
-
-            if found_amount:
-                capital_raises.append({
-                    "form": form,
-                    "date": filing_date,
-                    "amount": found_amount,
-                    "url": html_url
-                })
-
-    return capital_raises if capital_raises else None
-
 
 # -------------------- Module 7: Get Public Float ---------------------
 
