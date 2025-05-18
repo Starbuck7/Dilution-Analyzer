@@ -34,29 +34,42 @@ def get_cash_and_burn(cik):
         res = requests.get(url, headers=USER_AGENT)
         if res.status_code != 200:
             return None, None
-        data = res.json()
-        filings = data.get("filings", {}).get("recent", {})
+
+        filings = res.json().get("filings", {}).get("recent", {})
         forms = filings.get("form", [])
         accessions = filings.get("accessionNumber", [])
         docs = filings.get("primaryDocument", [])
+        dates = filings.get("filingDate", [])
+
         for i, form in enumerate(forms):
+            if form not in ["10-Q", "10-K"]:
+                continue
             if i >= len(accessions) or i >= len(docs):
                 continue
-            if form in ["10-Q", "10-K"]:
-                accession = accessions[i].replace("-", "")
-                doc = docs[i]
-                html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-                html = requests.get(html_url, headers=USER_AGENT).text
-                text = BeautifulSoup(html, "lxml").get_text().replace(",", "").lower()
-                cash_match = re.search(r"cash and cash equivalents[^$0-9]{0,20}\$?([0-9.]+)", text)
-                burn_match = re.search(r"(monthly burn rate|net cash used in operating activities)[^$0-9]{0,20}\$?([0-9.]+)", text)
-                cash = float(cash_match.group(1)) if cash_match else None
-                burn = float(burn_match.group(2)) / 3 if burn_match and "operating" in burn_match.group(1) else float(burn_match.group(2)) if burn_match else None
-                return cash, burn
+
+            accession = accessions[i].replace("-", "")
+            doc = docs[i]
+            html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
+            html = requests.get(html_url, headers=USER_AGENT).text
+            text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
+
+            # Look for cash
+            cash_match = re.search(
+                r"(?i)(cash and cash equivalents|cash position)\s*[\$:]*\s*([0-9]{1,3}(?:[0-9\s]*[0-9]))", text)
+            cash = int(cash_match.group(2).replace(" ", "")) if cash_match else None
+
+            # Look for burn rate: sometimes referred to as "net cash used in operating activities"
+            burn_match = re.search(
+                r"(?i)(net cash used in operating activities)[^\$0-9\-]{0,20}[\$:]*\s*\(?-?([0-9]{1,3}(?:[0-9\s]*[0-9]))\)?", text)
+            burn = int(burn_match.group(2).replace(" ", "")) / 3 if burn_match else None  # quarterly to monthly
+
+            if cash or burn:
+                return cash, abs(burn) if burn else None
+
+        return None, None
     except Exception as e:
         print(f"Error in get_cash_and_burn: {e}")
-    return None, None
-
+        return None, None
 
 def calculate_cash_runway(cash, burn):
     if cash and burn:
