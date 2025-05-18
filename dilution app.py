@@ -28,8 +28,8 @@ def get_market_cap(ticker):
 
 # -------------------- Module 2: Cash Runway --------------------
 def get_cash_and_burn(cik):
-    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
     try:
+        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
         res = requests.get(url, headers=USER_AGENT)
         if res.status_code != 200:
             return None, None
@@ -155,31 +155,49 @@ def get_outstanding_shares(cik):
         
 # -------------------- Module 5: Convertibles and Warrants --------------------
 def get_convertibles_and_warrants(cik):
-    filings = res.get("filings", {}).get("recent", {})
-    forms = filings.get("form", [])
-    accessions = filings.get("accessionNumber", [])
-    docs = filings.get("primaryDocument", [])
-    dates = filings.get("filingDate", [])
+    try:
+        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+        res = requests.get(url, headers=USER_AGENT)
+        if res.status_code != 200:
+            return None, None
 
-    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-    res = requests.get(url, headers=USER_AGENT).json()
-    instruments = []
-    for i, form in enumerate(forms):
-        if i >= len(accessions) or i >= len(docs) or i >= len(dates):
-            continue  # Skip incomplete entries
+        filings = res.json().get("filings", {}).get("recent", {})
+        forms = filings.get("form", [])
+        accessions = filings.get("accessionNumber", [])
+        docs = filings.get("primaryDocument", [])
 
-        if form in [...]:
-            accession = accessions[i].replace("-", "")
-            doc = docs[i]
-            html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-            html = requests.get(html_url, headers=USER_AGENT).text
-            text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
-            matches = re.findall(r"(convertible\s+(?:note|debenture|preferred\s+stock)|warrant[s]?)", text, re.IGNORECASE)
-            for match in matches:
-                instruments.append(match[0])
-            if instruments:
-                return list(set(instruments)), html_url
-    return None, None
+        instruments = []
+
+        for i, form in enumerate(forms):
+            if form in ["10-Q", "10-K", "8-K"]:
+                if i >= len(accessions) or i >= len(docs):
+                    continue  # Skip incomplete entries
+
+                accession = accessions[i].replace("-", "")
+                doc = docs[i]
+                html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
+                html = requests.get(html_url, headers=USER_AGENT).text
+                text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
+
+                # Look for common convertibles/warrant patterns
+                patterns = [
+                    r"(?:convertible\s+(?:notes|debentures|securities)[^\.]{0,100})",
+                    r"(?:warrants\s+to\s+purchase\s+[^\.;]{0,100})",
+                    r"(?:preferred\s+stock\s+convertible\s+into\s+common\s+stock[^\.]{0,100})"
+                ]
+                for pattern in patterns:
+                    matches = re.findall(pattern, text, re.IGNORECASE)
+                    for match in matches:
+                        instruments.append(match.strip())
+
+                if instruments:
+                    return instruments, html_url  # Return on first good find
+
+        return None, None
+    except Exception as e:
+        print(f"Error in get_convertibles_and_warrants: {e}")
+        return None, None
+
 
 # -------------------- Module 6: Historical Capital Raises --------------------
 def get_historical_capital_raises(cik):
