@@ -367,7 +367,7 @@ def get_capital_raises_score(num_raises_past_year):
         return 0
 
 def calculate_dilution_pressure_score(
-    atm_capacity_usd,
+    atm_capacity_score,
     available_dilution_shares,
     convertible_value_usd,
     capital_raises_past_year,
@@ -377,8 +377,8 @@ def calculate_dilution_pressure_score(
     score = 0
 
     # ATM weighting
-    if atm_capacity_usd and market_cap:
-        ratio = atm_capacity_usd / market_cap
+    if atm_capacity_score and market_cap:
+        ratio = atm_capacity_score / market_cap
         if ratio > 0.5:
             score += 30
         elif ratio > 0.3:
@@ -498,7 +498,7 @@ if ticker:
 
         # Gathering all values for Dilution Score
         score = calculate_dilution_pressure_score(
-            atm_capacity_usd=atm,
+            atm_capacity_score=atm,
             available_dilution_shares=(authorized - outstanding) if authorized and outstanding else 0,
             convertible_value_usd=sum(instruments.values()) if isinstance(instruments, dict) else 0,
             capital_raises_past_year=len([
