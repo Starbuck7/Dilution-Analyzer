@@ -322,6 +322,61 @@ def estimate_offering_ability(cik):
         "Offering Ceiling": offering_ceiling
     }
 
+#-------------MODULE 9: CALCULATIONG DILUTION PRESSURE SCORE ------------
+def get_atm_capacity_score(available_atm_usd, market_cap):
+    if not market_cap or not available_atm_usd:
+        return 10  # neutral if missing
+
+    ratio = available_atm_usd / market_cap
+    if ratio > 0.75:
+        return 20
+    elif ratio > 0.5:
+        return 15
+    elif ratio > 0.25:
+        return 10
+    elif ratio > 0.1:
+        return 5
+    else:
+        return 0
+
+def get_convertibles_score(convertible_total_usd, market_cap):
+    if not market_cap or not convertible_total_usd:
+        return 5  # neutral
+
+    ratio = convertible_total_usd / market_cap
+    if ratio > 0.5:
+        return 15
+    elif ratio > 0.3:
+        return 10
+    elif ratio > 0.15:
+        return 5
+    else:
+        return 0
+
+def get_capital_raises_score(num_raises_past_year):
+    if num_raises_past_year >= 4:
+        return 15
+    elif num_raises_past_year == 3:
+        return 10
+    elif num_raises_past_year == 2:
+        return 7
+    elif num_raises_past_year == 1:
+        return 4
+    else:
+        return 0
+
+def calculate_dilution_pressure_score(atm_capacity, convertibles_warrants, total_raises, market_cap):
+    if not market_cap or market_cap == 0:
+        return None
+
+    # Normalize ratios (cap at 1.0 to avoid skew)
+    atm_ratio = min(atm_capacity / market_cap, 1.0) if atm_capacity else 0
+    convert_ratio = min(convertibles_warrants / market_cap, 1.0) if convertibles_warrants else 0
+    raise_ratio = min(total_raises / market_cap, 1.0) if total_raises else 0
+
+    # Weighted score (total out of 100)
+    score = round(atm_ratio * 40 + convert_ratio * 35 + raise_ratio * 25)
+    return score
 
 # -------------------- Streamlit App --------------------
 st.title("Stock Analysis Dashboard")
@@ -394,32 +449,32 @@ if ticker:
         for k, v in offering_data.items():
             st.write(f"{k}: {v:,.0f}" if isinstance(v, (int, float)) else f"{k}: {v}")
 
-        # Example usage after gathering all values
+        # Gathering all values for Dilution Score
         runway = calculate_cash_runway(cash, burn)  # from your logic
-        atm_score = atm_capacity_score  # you may need to map it to 0–20 scale
-        convert_score = convertibles_score  # 0–15
-        raise_score = raises_score         # 0–15
+        atm_score = get_atm_capacity_score(available_atm_usd, market_cap)
+        convert_score = get_convertibles_score(convertible_total_usd, market_cap)
+        raise_score = get_capital_raises_score(num_raises_past_year)
+
 
         # Optional red flag: e.g., check for 'going concern' warning or other signs
         red_flags_score = 0
 
-        score, risk_level = calculate_dilution_pressure_score(
-            runway_months=runway,
-            atm_capacity_score=atm_score,
-            authorized_shares=authorized,
-            outstanding_shares=outstanding,
-            convertibles_score=convert_score,
-            raises_score=raise_score,
-            market_cap=market_cap,
-            public_float=public_float,
-            red_flags_score=red_flags_score
-        )
+        score = calculate_dilution_pressure_score(atm_capacity, convertibles_and_warrants, total_raises, market_cap)
 
-st.subheader("8. Dilution Pressure Score")
-st.metric("Score", f"{score}/100", delta=None)
-st.markdown(f"**Dilution Risk Level:** :red[{risk_level}]")
-risk_emoji = "🟢" if risk_level == "LOW" else "🟠" if risk_level == "MEDIUM" else "🔴"
-st.markdown(f"### {risk_emoji} Dilution Risk: **{risk_level}** ({score}/100)")
+        st.subheader("8. Dilution Pressure Score")
+        if score is not None:
+            st.metric("Score (0-100)", f"{score}")
+            if score > 70:
+                st.warning("⚠️ High Dilution Risk")
+            elif score > 40:
+                st.info("🟡 Moderate Dilution Risk")
+            else:
+                st.success("🟢 Low Dilution Risk")
+        else:
+            st.write("Insufficient data to calculate score.")
+
+
+
 
 
 
