@@ -24,7 +24,7 @@ def get_market_cap(ticker):
 
 # -------------------- Module 2: Cash Runway --------------------
 def get_cash_and_burn(cik):
-    def calculate_cash_runway(cash, burn):
+def calculate_cash_runway(cash, burn):
     if cash and burn:
         return cash / burn
     return None
