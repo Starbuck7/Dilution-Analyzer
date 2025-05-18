@@ -366,21 +366,64 @@ def get_capital_raises_score(num_raises_past_year):
     else:
         return 0
 
-def calculate_dilution_pressure_score(atm_capacity, convertibles_and_warrants, total_raises, market_cap, num_raises_past_year=0, red_flags_score=0):
-    try:
-        if not market_cap or market_cap == 0:
-            return None
+def calculate_dilution_pressure_score(
+    atm_capacity_usd,
+    available_dilution_shares,
+    convertible_value_usd,
+    capital_raises_past_year,
+    cash_runway_months,
+    market_cap
+):
+    score = 0
 
-        atm_score = min(atm_capacity / market_cap * 100, 40)
-        convert_score = min(convertibles_and_warrants * 5, 20)
-        raise_score = min(total_raises / market_cap * 100, 30)
-        frequency_score = min(num_raises_past_year * 5, 10)
+    # ATM weighting
+    if atm_capacity_usd and market_cap:
+        ratio = atm_capacity_usd / market_cap
+        if ratio > 0.5:
+            score += 30
+        elif ratio > 0.3:
+            score += 20
+        elif ratio > 0.1:
+            score += 10
 
-        total_score = atm_score + convert_score + raise_score + frequency_score + red_flags_score
-        return round(min(total_score, 100), 1)
-    except Exception as e:
-        print(f"Error in score calculation: {e}")
-        return None
+    # Authorized - Outstanding shares (i.e., dilution potential)
+    if available_dilution_shares and market_cap:
+        est_dilution_value = available_dilution_shares * 0.5  # assume $0.50/share
+        dilution_ratio = est_dilution_value / market_cap
+        if dilution_ratio > 1:
+            score += 25
+        elif dilution_ratio > 0.5:
+            score += 15
+        elif dilution_ratio > 0.25:
+            score += 10
+
+    # Convertibles & Warrants
+    if convertible_value_usd and market_cap:
+        ratio = convertible_value_usd / market_cap
+        if ratio > 0.5:
+            score += 20
+        elif ratio > 0.25:
+            score += 10
+
+    # Recent raises
+    if capital_raises_past_year >= 3:
+        score += 15
+    elif capital_raises_past_year == 2:
+        score += 10
+    elif capital_raises_past_year == 1:
+        score += 5
+
+    # Cash Runway
+    if cash_runway_months is not None:
+        if cash_runway_months < 3:
+            score += 15
+        elif cash_runway_months < 6:
+            score += 10
+        elif cash_runway_months < 12:
+            score += 5
+
+    return min(score, 100)
+
 
 # -------------------- Streamlit App --------------------
 st.title("Stock Analysis Dashboard")
@@ -454,12 +497,17 @@ if ticker:
             st.write(f"{k}: {v:,.0f}" if isinstance(v, (int, float)) else f"{k}: {v}")
 
         # Gathering all values for Dilution Score
-        atm_capacity = atm if atm else 0
-        convertibles_and_warrants = len(instruments) if instruments else 0
-        total_raises = sum(entry["amount"] for entry in raises) if raises else 0
-        num_raises_past_year = len([
-            entry for entry in raises if datetime.strptime(entry["date"], "%Y-%m-%d") > datetime.now() - timedelta(days=365)
-        ]) if raises else 0
+        score = calculate_dilution_pressure_score(
+            atm_capacity_usd=atm,
+            available_dilution_shares=(authorized - outstanding) if authorized and outstanding else 0,
+            convertible_value_usd=sum(instruments.values()) if isinstance(instruments, dict) else 0,
+            capital_raises_past_year=len([
+                entry for entry in raises
+                if datetime.strptime(entry["date"], "%Y-%m-%d") > datetime.now() - timedelta(days=365)
+            ]) if raises else 0,
+            cash_runway_months=runway,
+            market_cap=market_cap
+        )
 
        # Optional red flag (for future expansion)
         red_flags_score = 0
