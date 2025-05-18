@@ -136,11 +136,7 @@ def get_outstanding_shares(cik):
                 if match:
                     return int(match.group(1))
         return None
-    except Exception as e:
-        print(f"Error in get_outstanding_shares: {e}")
-        return None
-
-                # Expanded regex to match various phrasings
+           # Expanded regex to match various phrasings
                 patterns = [
                     r"(?i)shares\s+issued\s+and\s+outstanding[^0-9]+([0-9,]+)",
                     r"(?i)common\s+shares\s+outstanding[^0-9]+([0-9,]+)",
@@ -152,12 +148,10 @@ def get_outstanding_shares(cik):
                     match = re.search(pattern, text)
                     if match:
                         return int(match.group(1).replace(",", ""))
-
     except Exception as e:
         print(f"Error in get_outstanding_shares: {e}")
-    return None
-
-
+        return None
+        
 # -------------------- Module 5: Convertibles and Warrants --------------------
 def get_convertibles_and_warrants(cik):
     filings = res.get("filings", {}).get("recent", {})
