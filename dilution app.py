@@ -28,36 +28,28 @@ def get_market_cap(ticker):
 
 # -------------------- Module 2: Cash Runway --------------------
 def get_cash_and_burn(cik):
-    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-    response = requests.get(url, headers=USER_AGENT)
-
-    if response.status_code != 200:
-        return None, None
-
     try:
-        res = response.json()
-    except ValueError:
-        return None, None
-
-    filings = res.get("filings", {}).get("recent", {})
-    for i, form in enumerate(filings.get("form", [])):
-        if form in ["10-Q", "10-K"]:
-            try:
+        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+        res = requests.get(url, headers={"User-Agent": "Your Name (youremail@example.com)"})
+        if res.status_code != 200:
+            return None, None
+        filings = res.json().get("filings", {}).get("recent", {})
+        for i, form in enumerate(filings.get("form", [])):
+            if form in ["10-Q", "10-K"]:
                 accession = filings["accessionNumber"][i].replace("-", "")
                 doc = filings["primaryDocument"][i]
                 html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-                html = requests.get(html_url, headers=USER_AGENT).text
-                text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
-
+                html_res = requests.get(html_url, headers={"User-Agent": "Your Name (youremail@example.com)"})
+                if html_res.status_code != 200:
+                    continue
+                text = BeautifulSoup(html_res.text, "lxml").get_text().replace(",", "")
                 cash_match = re.search(r"cash and cash equivalents[^$]*\$?([0-9.]+)", text, re.IGNORECASE)
                 burn_match = re.search(r"monthly burn rate[^$]*\$?([0-9.]+)", text, re.IGNORECASE)
-
                 if cash_match and burn_match:
                     return float(cash_match.group(1)), float(burn_match.group(1))
-            except Exception:
-                continue
+    except Exception as e:
+        print(f"Error in get_cash_and_burn: {e}")
     return None, None
-
 
 def calculate_cash_runway(cash, burn):
     if cash and burn:
