@@ -81,31 +81,48 @@ def get_authorized_shares(cik):
     return None
 
 def get_outstanding_shares(cik):
+    filings = res.get("filings", {}).get("recent", {})
+    forms = filings.get("form", [])
+    accessions = filings.get("accessionNumber", [])
+    docs = filings.get("primaryDocument", [])
+    dates = filings.get("filingDate", [])
     url = f"https://data.sec.gov/submissions/CIK{cik}.json"
     res = requests.get(url, headers=USER_AGENT).json()
-    filings = res.get("filings", {}).get("recent", {})
-    for i, form in enumerate(filings.get("form", [])):
-        if form in ["10-Q", "10-K"]:
-            accession = filings["accessionNumber"][i].replace("-", "")
-            doc = filings["primaryDocument"][i]
+        
+    for i, form in enumerate(forms):
+        if i >= len(accessions) or i >= len(docs) or i >= len(dates):
+            continue  # Skip incomplete entries
+
+        if form in [...]:
+            accession = accessions[i].replace("-", "")
+            doc = docs[i]
+            date = dates[i]  # if needed
             html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
             html = requests.get(html_url, headers=USER_AGENT).text
             text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
             match = re.search(r"outstanding\s+shares[^0-9]+([0-9]+)", text, re.IGNORECASE)
-            if match:
+        if match:
                 return int(match.group(1))
     return None
 
 # -------------------- Module 5: Convertibles and Warrants --------------------
 def get_convertibles_and_warrants(cik):
+    filings = res.get("filings", {}).get("recent", {})
+    forms = filings.get("form", [])
+    accessions = filings.get("accessionNumber", [])
+    docs = filings.get("primaryDocument", [])
+    dates = filings.get("filingDate", [])
+
     url = f"https://data.sec.gov/submissions/CIK{cik}.json"
     res = requests.get(url, headers=USER_AGENT).json()
-    filings = res.get("filings", {}).get("recent", {})
     instruments = []
-    for i, form in enumerate(filings.get("form", [])):
-        if form in ["S-1", "S-3", "424B5"]:
-            accession = filings["accessionNumber"][i].replace("-", "")
-            doc = filings["primaryDocument"][i]
+    for i, form in enumerate(forms):
+        if i >= len(accessions) or i >= len(docs) or i >= len(dates):
+            continue  # Skip incomplete entries
+
+        if form in [...]:
+            accession = accessions[i].replace("-", "")
+            doc = docs[i]
             html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
             html = requests.get(html_url, headers=USER_AGENT).text
             text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
@@ -119,7 +136,9 @@ def get_convertibles_and_warrants(cik):
 # -------------------- Module 6: Historical Capital Raises --------------------
 def get_historical_capital_raises(cik):
     import math
-
+    docs = filings.get("primaryDocument", [])
+    accessions = filings.get("accessionNumber", [])
+    dates = filings.get("filingDate", [])
     url = f"https://data.sec.gov/submissions/CIK{cik}.json"
     res = requests.get(url, headers=USER_AGENT)
     if res.status_code != 200:
@@ -137,9 +156,12 @@ def get_historical_capital_raises(cik):
 
     for i, form in enumerate(filings.get("form", [])):
         if form in ["S-1", "S-3", "424B5", "8-K"]:
-            accession = filings["accessionNumber"][i].replace("-", "")
-            doc = filings["primaryDocument"][i]
-            filing_date = filings["filingDate"][i]
+            if i >= len(docs) or i >= len(accessions) or i >= len(dates):
+                continue  # Skip if any required field is missing
+
+            accession = accessions[i].replace("-", "")
+            doc = docs[i]
+            filing_date = dates[i]
             html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
             html_res = requests.get(html_url, headers=USER_AGENT)
             if html_res.status_code != 200:
