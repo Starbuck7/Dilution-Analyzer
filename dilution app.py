@@ -365,18 +365,21 @@ def get_capital_raises_score(num_raises_past_year):
     else:
         return 0
 
-def calculate_dilution_pressure_score(atm_capacity, convertibles_warrants, total_raises, market_cap):
-    if not market_cap or market_cap == 0:
+def calculate_dilution_pressure_score(atm_capacity, convertibles_and_warrants, total_raises, market_cap, num_raises_past_year=0, red_flags_score=0):
+    try:
+        if not market_cap or market_cap == 0:
+            return None
+
+        atm_score = min(atm_capacity / market_cap * 100, 40)
+        convert_score = min(convertibles_and_warrants * 5, 20)
+        raise_score = min(total_raises / market_cap * 100, 30)
+        frequency_score = min(num_raises_past_year * 5, 10)
+
+        total_score = atm_score + convert_score + raise_score + frequency_score + red_flags_score
+        return round(min(total_score, 100), 1)
+    except Exception as e:
+        print(f"Error in score calculation: {e}")
         return None
-
-    # Normalize ratios (cap at 1.0 to avoid skew)
-    atm_ratio = min(atm_capacity / market_cap, 1.0) if atm_capacity else 0
-    convert_ratio = min(convertibles_warrants / market_cap, 1.0) if convertibles_warrants else 0
-    raise_ratio = min(total_raises / market_cap, 1.0) if total_raises else 0
-
-    # Weighted score (total out of 100)
-    score = round(atm_ratio * 40 + convert_ratio * 35 + raise_ratio * 25)
-    return score
 
 # -------------------- Streamlit App --------------------
 st.title("Stock Analysis Dashboard")
@@ -450,28 +453,41 @@ if ticker:
             st.write(f"{k}: {v:,.0f}" if isinstance(v, (int, float)) else f"{k}: {v}")
 
         # Gathering all values for Dilution Score
-        runway = calculate_cash_runway(cash, burn)  # from your logic
-        atm_score = get_atm_capacity_score(available_atm_usd, market_cap)
-        convert_score = get_convertibles_score(convertible_total_usd, market_cap)
-        raise_score = get_capital_raises_score(num_raises_past_year)
+       atm_capacity = atm if atm else 0
+       convertibles_and_warrants = len(instruments) if instruments else 0
+       total_raises = sum(entry["amount"] for entry in raises) if raises else 0
+       num_raises_past_year = len([
+           entry for entry in raises if datetime.strptime(entry["date"], "%Y-%m-%d") > datetime.now() - timedelta(days=365)
+       ]) if raises else 0
 
+       # Optional red flag (for future expansion)
+       red_flags_score = 0
 
-        # Optional red flag: e.g., check for 'going concern' warning or other signs
-        red_flags_score = 0
+       # Calculate dilution score
+       try:
+           score = calculate_dilution_pressure_score(
+               atm_capacity,
+               convertibles_and_warrants,
+               total_raises,
+               market_cap,
+               num_raises_past_year,
+               red_flags_score
+           )
 
-        score = calculate_dilution_pressure_score(atm_capacity, convertibles_and_warrants, total_raises, market_cap)
-
-        st.subheader("8. Dilution Pressure Score")
-        if score is not None:
-            st.metric("Score (0-100)", f"{score}")
-            if score > 70:
-                st.warning("⚠️ High Dilution Risk")
-            elif score > 40:
-                st.info("🟡 Moderate Dilution Risk")
-            else:
-                st.success("🟢 Low Dilution Risk")
-        else:
-            st.write("Insufficient data to calculate score.")
+           st.subheader("8. Dilution Pressure Score")
+           if score is not None:
+               st.metric("Score (0-100)", f"{score}")
+               if score > 70:
+                   st.warning("⚠️ High Dilution Risk")
+               elif score > 40:
+                   st.info("🟡 Moderate Dilution Risk")
+               else:
+                   st.success("🟢 Low Dilution Risk")
+           else:
+               st.write("Insufficient data to calculate score.")
+       except Exception as e:
+           st.subheader("8. Dilution Pressure Score")
+           st.error(f"Error calculating score: {e}")
 
 
 
