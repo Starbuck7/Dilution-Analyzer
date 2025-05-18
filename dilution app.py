@@ -82,8 +82,8 @@ def get_atm_offering(cik):
 
 # -------------------- Module 4: Authorized vs Outstanding Shares --------------------
 def get_authorized_shares(cik):
-    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
     try:
+        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
         res = requests.get(url, headers=USER_AGENT)
         if res.status_code != 200:
             return None
