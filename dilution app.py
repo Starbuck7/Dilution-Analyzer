@@ -634,13 +634,15 @@ if ticker:
        # Calculate dilution score
         try:
             score = calculate_dilution_pressure_score(
-                atm_capacity_usd=atm,
-                available_dilution_shares=available_dilution_shares,
-                convertible_value_usd=convertible_total_usd,
-                capital_raises_past_year=num_raises_past_year,
-                cash_runway_months=runway,
-                market_cap=market_cap
+                atm_capacity_usd=atm,  # from get_atm_offering()
+                authorized_shares=authorized,  # from get_authorized_shares()
+                outstanding_shares=outstanding,  # from get_outstanding_shares()
+                convertibles_usd=convertible_total_usd,  # estimate total from instruments
+                capital_raises_past_year=num_raises_past_year,  # len of filtered raises
+                cash_runway_months=runway,  # from calculate_cash_runway()
+                market_cap=market_cap  # from get_market_cap()
             )
+
 
             st.subheader("8. Dilution Pressure Score")
             if score is not None:
