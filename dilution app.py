@@ -638,7 +638,7 @@ if ticker:
                 authorized_shares=authorized,  # from get_authorized_shares()
                 outstanding_shares=outstanding,  # from get_outstanding_shares()
                 convertibles_usd=convertible_total_usd,  # estimate total from instruments
-                capital_raises_past_year=num_raises_past_year,  # len of filtered raises
+                historical_capital_raises=num_raises_past_year,  # len of filtered raises
                 cash_runway_months=runway,  # from calculate_cash_runway()
                 market_cap=market_cap  # from get_market_cap()
             )
