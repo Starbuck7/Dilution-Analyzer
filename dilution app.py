@@ -434,11 +434,11 @@ def estimate_offering_ability(cik):
     }
 
 #-------------MODULE 9: CALCULATIONG DILUTION PRESSURE SCORE ------------
-def get_atm_capacity_score(available_atm_usd, market_cap):
-    if not market_cap or not available_atm_usd:
+def get_atm_capacity_score(atm_capacity_usd, market_cap):
+    if not market_cap or not atm_capacity_usd:
         return 10  # neutral if missing
 
-    ratio = available_atm_usd / market_cap
+    ratio = atm_capacity_usd / market_cap
     if ratio > 0.75:
         return 20
     elif ratio > 0.5:
@@ -450,8 +450,8 @@ def get_atm_capacity_score(available_atm_usd, market_cap):
     else:
         return 0
 
-def get_convertibles_score(convertible_total_usd, market_cap):
-    if not market_cap or not convertible_total_usd:
+def get_convertibles_score(convertibles_usd, market_cap):
+    if not market_cap or not convertibles_usd:
         return 5  # neutral
 
     ratio = convertible_total_usd / market_cap
@@ -481,13 +481,13 @@ def calculate_dilution_pressure_score(
     authorized_shares,
     outstanding_shares,
     convertibles_usd,
-    capital_raises_past_year,
+    num_raises_past_year,
     cash_runway_months,
     market_cap
 ):
     score = 0
 
-    # ATM
+    # ATM Offering Capacity Scoring
     if atm_capacity_usd and market_cap:
         ratio = atm_capacity_usd / market_cap
         if ratio > 0.75:
@@ -501,10 +501,10 @@ def calculate_dilution_pressure_score(
         else:
             score += 5
 
-    # Available shares for dilution
+    # Authorized - Outstanding (Dilution Potential)
     if authorized_shares and outstanding_shares and market_cap:
         available = authorized_shares - outstanding_shares
-        est_value = available * 0.5  # Assume 50 cents per share
+        est_value = available * 0.5  # Assuming $0.50 per share
         dilution_ratio = est_value / market_cap
         if dilution_ratio > 1:
             score += 25
@@ -515,7 +515,7 @@ def calculate_dilution_pressure_score(
         else:
             score += 5
 
-    # Convertibles and Warrants
+    # Convertibles & Warrants
     if convertibles_usd and market_cap:
         convert_ratio = convertibles_usd / market_cap
         if convert_ratio > 0.5:
@@ -525,14 +525,14 @@ def calculate_dilution_pressure_score(
         elif convert_ratio > 0.1:
             score += 5
 
-    # Capital Raises
-    if capital_raises_past_year >= 4:
+    # Capital Raises in Past Year
+    if num_raises_past_year >= 4:
         score += 15
-    elif capital_raises_past_year == 3:
+    elif num_raises_past_year == 3:
         score += 10
-    elif capital_raises_past_year == 2:
+    elif num_raises_past_year == 2:
         score += 7
-    elif capital_raises_past_year == 1:
+    elif num_raises_past_year == 1:
         score += 4
 
     # Cash Runway
@@ -545,6 +545,7 @@ def calculate_dilution_pressure_score(
             score += 5
 
     return min(score, 100)
+
 
 
 # -------------------- Streamlit App --------------------
