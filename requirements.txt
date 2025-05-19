@@ -1,4 +1,5 @@
 streamlit
+yfinance
 yahoo_fin
 requests
 beautifulsoup4
