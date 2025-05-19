@@ -23,9 +23,28 @@ def get_cik_from_ticker(ticker):
 
 # -------------------- Module 1: Market Cap --------------------
 def get_market_cap(ticker):
-    stock = yf.Ticker(ticker)
-    info = stock.info
-    return info.get("marketCap", None)
+    import yfinance as yf
+
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        return info.get("marketCap")
+    except Exception as e:
+        print(f"yfinance failed: {e}")
+
+    # Fallback using Yahoo Finance API (unofficial)
+    try:
+        url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}?modules=price"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        res = requests.get(url, headers=headers)
+        data = res.json()
+
+        market_cap = data["quoteSummary"]["result"][0]["price"].get("marketCap", {}).get("raw")
+        return market_cap
+    except Exception as e:
+        print(f"Yahoo fallback failed: {e}")
+        return None
+
 
 # -------------------- Module 2: Cash Runway --------------------
 def get_cash_and_burn(cik):
