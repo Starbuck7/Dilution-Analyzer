@@ -535,7 +535,7 @@ def calculate_dilution_pressure_score(
     authorized_shares,
     outstanding_shares,
     convertibles_usd,
-    num_raises_past_year,
+    capital_raises_past_year,
     cash_runway_months,
     market_cap
 ):
@@ -580,13 +580,13 @@ def calculate_dilution_pressure_score(
             score += 5
 
     # Capital Raises in Past Year
-    if num_raises_past_year >= 4:
+    if capital_raises_past_year >= 4:
         score += 15
-    elif num_raises_past_year == 3:
+    elif capital_raises_past_year == 3:
         score += 10
-    elif num_raises_past_year == 2:
+    elif capital_raises_past_year == 2:
         score += 7
-    elif num_raises_past_year == 1:
+    elif capital_raises_past_year == 1:
         score += 4
 
     # Cash Runway
@@ -692,7 +692,7 @@ if ticker:
                 authorized_shares=authorized,  # from get_authorized_shares()
                 outstanding_shares=outstanding,  # from get_outstanding_shares()
                 convertibles_usd=convertible_total_usd,  # estimate total from instruments
-                historical_capital_raises=num_raises_past_year,  # len of filtered raises
+                capital_raises_past_year=num_raises_past_year,  # len of filtered raises
                 cash_runway_months=runway,  # from calculate_cash_runway()
                 market_cap=market_cap  # from get_market_cap()
             )
