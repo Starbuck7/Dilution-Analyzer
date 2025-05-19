@@ -1,11 +1,11 @@
 import streamlit as st
-import yfinance as yf
 import requests
 from bs4 import BeautifulSoup
 import re
 import warnings
 from bs4 import XMLParsedAsHTMLWarning
 from datetime import datetime, timedelta
+from yahoo_fin import stock_info as si
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
@@ -23,27 +23,21 @@ def get_cik_from_ticker(ticker):
 
 # -------------------- Module 1: Market Cap --------------------
 def get_market_cap(ticker):
-    import yfinance as yf
-
     try:
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        return info.get("marketCap")
+        market_cap = si.get_quote_table(ticker).get("Market Cap")
+        if market_cap:
+            # Convert string like '15.6M', '1.2B' to numeric
+            multiplier = 1
+            if market_cap[-1] == "B":
+                multiplier = 1_000_000_000
+            elif market_cap[-1] == "M":
+                multiplier = 1_000_000
+            elif market_cap[-1] == "K":
+                multiplier = 1_000
+            return float(market_cap[:-1].replace(",", "")) * multiplier
     except Exception as e:
-        print(f"yfinance failed: {e}")
-
-    # Fallback using Yahoo Finance API (unofficial)
-    try:
-        url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}?modules=price"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get(url, headers=headers)
-        data = res.json()
-
-        market_cap = data["quoteSummary"]["result"][0]["price"].get("marketCap", {}).get("raw")
-        return market_cap
-    except Exception as e:
-        print(f"Yahoo fallback failed: {e}")
-        return None
+        print(f"Error fetching market cap: {e}")
+    return None
 
 
 # -------------------- Module 2: Cash Runway --------------------
