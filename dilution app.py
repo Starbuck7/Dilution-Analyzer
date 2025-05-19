@@ -94,30 +94,36 @@ def get_atm_offering(cik):
                 return amount, html_url
     return None, None
 
-# -------------------- Module 4: Authorized vs Outstanding Shares --------------------
+# -------------------- Module 4: Authorized vs Outstanding Shares & Float --------------------
 def get_authorized_shares(cik):
     try:
         url = f"https://data.sec.gov/submissions/CIK{cik}.json"
         res = requests.get(url, headers=USER_AGENT)
         if res.status_code != 200:
             return None
-        data = res.json()
-        filings = data.get("filings", {}).get("recent", {})
+
+        filings = res.json().get("filings", {}).get("recent", {})
         forms = filings.get("form", [])
         accessions = filings.get("accessionNumber", [])
         docs = filings.get("primaryDocument", [])
+
         for i, form in enumerate(forms):
-            if i >= len(accessions) or i >= len(docs):
-                continue
-            if form == "DEF 14A":
+            if form in ["10-K", "10-Q", "DEF 14A", "8-K/A"] and i < len(accessions) and i < len(docs):
                 accession = accessions[i].replace("-", "")
                 doc = docs[i]
                 html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
                 html = requests.get(html_url, headers=USER_AGENT).text
                 text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
-                match = re.search(r"(?i)authorized\s+(?:number of\s+)?shares[^0-9]{0,20}([0-9]{3,})", text)
-                if match:
-                    return int(match.group(1))
+
+                patterns = [
+                    r"authorized\s+capital\s+stock[^0-9]+([0-9]{3,})",
+                    r"authorized\s+shares[^0-9]+([0-9]{3,})",
+                    r"number\s+of\s+authorized\s+shares[^0-9]+([0-9]{3,})"
+                ]
+                for pattern in patterns:
+                    match = re.search(pattern, text, re.IGNORECASE)
+                    if match:
+                        return int(match.group(1))
     except Exception as e:
         print(f"Error in get_authorized_shares: {e}")
     return None
@@ -133,40 +139,74 @@ def get_outstanding_shares(cik):
         forms = filings.get("form", [])
         accessions = filings.get("accessionNumber", [])
         docs = filings.get("primaryDocument", [])
-        dates = filings.get("filingDate", [])
 
         for i, form in enumerate(forms):
-            if i >= len(accessions) or i >= len(docs) or i >= len(dates):
-                continue  # Skip incomplete entries
-
-            if form in ["10-Q", "10-K", "DEF 14A"]:  # Expand if needed
+            if form in ["10-K", "10-Q", "DEF 14A", "8-K/A"] and i < len(accessions) and i < len(docs):
                 accession = accessions[i].replace("-", "")
                 doc = docs[i]
                 html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
                 html = requests.get(html_url, headers=USER_AGENT).text
                 text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
 
-                # Try primary pattern
-                match = re.search(r"(?:common\s+stock\s+)?outstanding\s+(?:shares|stock)[^0-9]{0,20}([0-9]{3,})", text, re.IGNORECASE)
-                if match:
-                    return int(match.group(1))
-
-                # Fallback: try additional phrasing patterns
                 patterns = [
-                    r"(?i)shares\s+issued\s+and\s+outstanding[^0-9]+([0-9,]+)",
-                    r"(?i)common\s+shares\s+outstanding[^0-9]+([0-9,]+)",
-                    r"(?i)total\s+shares\s+outstanding[^0-9]+([0-9,]+)",
-                    r"(?i)shares\s+outstanding[^0-9]+([0-9,]+)"
+                    r"shares\s+issued\s+and\s+outstanding[^0-9]+([0-9]{3,})",
+                    r"common\s+stock\s+outstanding[^0-9]+([0-9]{3,})",
+                    r"total\s+shares\s+outstanding[^0-9]+([0-9]{3,})",
+                    r"outstanding\s+shares[^0-9]+([0-9]{3,})"
                 ]
                 for pattern in patterns:
-                    match = re.search(pattern, text)
+                    match = re.search(pattern, text, re.IGNORECASE)
                     if match:
-                        return int(match.group(1).replace(",", ""))
-        return None
+                        return int(match.group(1))
     except Exception as e:
         print(f"Error in get_outstanding_shares: {e}")
-        return None
+    return None
         
+def get_public_float(cik):
+    try:
+        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+        res = requests.get(url, headers=USER_AGENT)
+        if res.status_code != 200:
+            return None
+
+        filings = res.json().get("filings", {}).get("recent", {})
+        forms = filings.get("form", [])
+        accessions = filings.get("accessionNumber", [])
+        docs = filings.get("primaryDocument", [])
+        
+        for i, form in enumerate(forms):
+            if form != "DEF 14A":
+                continue
+            if i >= len(accessions) or i >= len(docs):
+                continue
+            
+            accession = accessions[i].replace("-", "")
+            doc = docs[i]
+            html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
+            html = requests.get(html_url, headers=USER_AGENT).text
+            text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
+            
+            # Try to extract insider ownership
+            insider_match = re.search(r"beneficially\s+owned\s+by\s+officers\s+and\s+directors[^0-9]+([0-9]{3,})", text, re.IGNORECASE)
+            if insider_match:
+                insider_shares = int(insider_match.group(1))
+                break
+        else:
+            insider_shares = 0  # Fallback if no DEF 14A or no match
+
+        # Get outstanding shares
+        outstanding = get_outstanding_shares(cik)
+        if not outstanding:
+            return None
+
+        # Estimate float
+        float_shares = outstanding - insider_shares
+        return max(float_shares, 0)
+
+    except Exception as e:
+        print(f"Error getting float: {e}")
+        return None
+       
 # -------------------- Module 5: Convertibles and Warrants --------------------
 def get_convertibles_and_warrants(cik):
     try:
