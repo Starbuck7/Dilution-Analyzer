@@ -88,34 +88,31 @@ def get_atm_offering(cik):
         forms = filings.get("form", [])
         accessions = filings.get("accessionNumber", [])
         docs = filings.get("primaryDocument", [])
-        dates = filings.get("filingDate", [])
 
         for i, form in enumerate(forms):
-            if form not in ["8-K", "S-3", "S-1", "424B5"]:
+            if form not in ["S-3", "S-1", "8-K"]:
                 continue
-
             if i >= len(accessions) or i >= len(docs):
                 continue
 
             accession = accessions[i].replace("-", "")
             doc = docs[i]
-            html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-            html = requests.get(html_url, headers=USER_AGENT).text
+            filing_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
+            html = requests.get(filing_url, headers=USER_AGENT).text
             text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
 
-            # Multiple ATM patterns to match different language styles
             atm_patterns = [
-                r"at-the-market[^$]*?offering[^$]*?\$([0-9]+(?:\.[0-9]+)?)",
-                r"at the market offering[^$]*?\$([0-9]+(?:\.[0-9]+)?)",
-                r"ATM offering[^$]*?\$([0-9]+(?:\.[0-9]+)?)",
-                r"sales\s+agreement\s+for\s+up\s+to\s+\$([0-9]+(?:\.[0-9]+)?)"
+                r"(?i)at-the-market\s+offering\s+.*?\$([0-9]{2,})",
+                r"(?i)offering\s+under\s+the\s+atm\s+program.*?\$([0-9]{2,})",
+                r"(?i)may\s+sell\s+up\s+to\s+\$([0-9]{2,})\s+.*?(?:shares|stock|securities)?",
+                r"(?i)maximum\s+aggregate\s+offering\s+price[^0-9]{0,20}\$([0-9]{2,})"
             ]
 
             for pattern in atm_patterns:
-                match = re.search(pattern, text, re.IGNORECASE)
+                match = re.search(pattern, text)
                 if match:
-                    return float(match.group(1)), html_url
-
+                    atm_amount = int(match.group(1))
+                    return atm_amount, filing_url
         return None, None
     except Exception as e:
         print(f"Error in get_atm_offering: {e}")
@@ -136,25 +133,33 @@ def get_authorized_shares(cik):
         docs = filings.get("primaryDocument", [])
 
         for i, form in enumerate(forms):
-            if form in ["10-K", "10-Q", "DEF 14A", "8-K/A"] and i < len(accessions) and i < len(docs):
-                accession = accessions[i].replace("-", "")
-                doc = docs[i]
-                html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-                html = requests.get(html_url, headers=USER_AGENT).text
-                text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
+            if form not in ["10-K", "10-Q", "DEF 14A"]:
+                continue
+            if i >= len(accessions) or i >= len(docs):
+                continue
 
-                patterns = [
-                    r"authorized\s+capital\s+stock[^0-9]+([0-9]{3,})",
-                    r"authorized\s+shares[^0-9]+([0-9]{3,})",
-                    r"number\s+of\s+authorized\s+shares[^0-9]+([0-9]{3,})"
-                ]
-                for pattern in patterns:
-                    match = re.search(pattern, text, re.IGNORECASE)
-                    if match:
-                        return int(match.group(1))
+            accession = accessions[i].replace("-", "")
+            doc = docs[i]
+            html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
+            html = requests.get(html_url, headers=USER_AGENT).text
+            text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
+
+            patterns = [
+                r"(?i)(?:total\s+)?authorized\s+(?:number\s+of\s+)?shares[^0-9]{0,20}([0-9]{5,})",
+                r"(?i)number\s+of\s+authorized\s+shares[^0-9]{0,20}([0-9]{5,})",
+                r"(?i)authorized\s+capital\s+stock[^0-9]{0,20}([0-9]{5,})",
+                r"(?i)authorized[^0-9]{0,10}([0-9]{5,})\s+shares"
+            ]
+
+            for pattern in patterns:
+                match = re.search(pattern, text)
+                if match:
+                    return int(match.group(1))
+        return None
     except Exception as e:
         print(f"Error in get_authorized_shares: {e}")
-    return None
+        return None
+
 
 def get_outstanding_shares(cik):
     try:
@@ -167,28 +172,37 @@ def get_outstanding_shares(cik):
         forms = filings.get("form", [])
         accessions = filings.get("accessionNumber", [])
         docs = filings.get("primaryDocument", [])
+        dates = filings.get("filingDate", [])
 
         for i, form in enumerate(forms):
-            if form in ["10-K", "10-Q", "DEF 14A", "8-K/A"] and i < len(accessions) and i < len(docs):
-                accession = accessions[i].replace("-", "")
-                doc = docs[i]
-                html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-                html = requests.get(html_url, headers=USER_AGENT).text
-                text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
+            if form not in ["10-Q", "10-K", "DEF 14A"]:
+                continue
+            if i >= len(accessions) or i >= len(docs):
+                continue
 
-                patterns = [
-                    r"shares\s+issued\s+and\s+outstanding[^0-9]+([0-9]{3,})",
-                    r"common\s+stock\s+outstanding[^0-9]+([0-9]{3,})",
-                    r"total\s+shares\s+outstanding[^0-9]+([0-9]{3,})",
-                    r"outstanding\s+shares[^0-9]+([0-9]{3,})"
-                ]
-                for pattern in patterns:
-                    match = re.search(pattern, text, re.IGNORECASE)
-                    if match:
-                        return int(match.group(1))
+            accession = accessions[i].replace("-", "")
+            doc = docs[i]
+            html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
+            html = requests.get(html_url, headers=USER_AGENT).text
+            text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
+
+            patterns = [
+                r"(?i)(?:common\s+stock\s+)?outstanding\s+(?:shares|stock)[^0-9]{0,20}([0-9]{5,})",
+                r"(?i)shares\s+issued\s+and\s+outstanding[^0-9]{0,20}([0-9]{5,})",
+                r"(?i)common\s+shares\s+outstanding[^0-9]{0,20}([0-9]{5,})",
+                r"(?i)total\s+shares\s+outstanding[^0-9]{0,20}([0-9]{5,})",
+                r"(?i)outstanding[^0-9]{0,10}([0-9]{5,})\s+shares",
+            ]
+
+            for pattern in patterns:
+                match = re.search(pattern, text)
+                if match:
+                    return int(match.group(1))
+        return None
     except Exception as e:
         print(f"Error in get_outstanding_shares: {e}")
-    return None
+        return None
+
         
 def get_public_float(cik):
     try:
