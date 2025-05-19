@@ -25,14 +25,25 @@ def get_cik_from_ticker(ticker):
 # -------------------- Module 1: Market Cap --------------------
 def get_market_cap(ticker):
     try:
-        print(f"Getting quote table for {ticker}...")
-        data = si.get_quote_table(ticker)
-        print(f"Quote table for {ticker}: {data}")
+        print(f"\n🔍 Attempting to fetch quote table for: {ticker}")
+        data = si.get_quote_table(ticker, dict_result=True)
+        print(f"📊 Quote table data: {data}\n")
 
-        market_cap_str = data.get("Market Cap")
+        # Try various possible keys
+        for key in data:
+            print(f"Checking key: {key} => {data[key]}")
+
+        market_cap_str = (
+            data.get("Market Cap") or
+            data.get("MarketCap") or
+            next((v for k, v in data.items() if "cap" in k.lower()), None)
+        )
+
         if not market_cap_str:
-            print("Market Cap not found in quote table.")
+            print("❌ Market Cap not found in quote table.")
             return None
+
+        print(f"✅ Raw market cap string: {market_cap_str}")
 
         multiplier = 1
         if market_cap_str.endswith("T"):
@@ -41,13 +52,20 @@ def get_market_cap(ticker):
             multiplier = 1_000_000_000
         elif market_cap_str.endswith("M"):
             multiplier = 1_000_000
+        elif market_cap_str.endswith("K"):
+            multiplier = 1_000
 
-        market_cap_value = float(market_cap_str[:-1]) * multiplier
-        print(f"Parsed Market Cap: {market_cap_value}")
+        numeric_part = market_cap_str[:-1].replace(",", "")
+        market_cap_value = float(numeric_part) * multiplier
+        print(f"✅ Parsed Market Cap: {market_cap_value}")
         return market_cap_value
+
     except Exception as e:
-        print(f"Exception in get_market_cap(): {e}")
+        import traceback
+        print(f"❌ Exception occurred in get_market_cap(): {e}")
+        traceback.print_exc()
         return None
+
 
 
 # -------------------- Module 2: Cash Runway --------------------
