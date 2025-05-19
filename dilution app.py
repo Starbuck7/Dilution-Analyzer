@@ -478,50 +478,62 @@ def get_capital_raises_score(num_raises_past_year):
 
 def calculate_dilution_pressure_score(
     atm_capacity_usd,
-    available_dilution_shares,
-    convertible_value_usd,
+    authorized_shares,
+    outstanding_shares,
+    convertibles_usd,
     capital_raises_past_year,
     cash_runway_months,
     market_cap
 ):
     score = 0
 
-    # ATM weighting
+    # ATM
     if atm_capacity_usd and market_cap:
         ratio = atm_capacity_usd / market_cap
-        if ratio > 0.5:
-            score += 30
-        elif ratio > 0.3:
+        if ratio > 0.75:
+            score += 25
+        elif ratio > 0.5:
             score += 20
+        elif ratio > 0.25:
+            score += 15
         elif ratio > 0.1:
             score += 10
+        else:
+            score += 5
 
-    # Authorized - Outstanding shares
-    if available_dilution_shares and market_cap:
-        est_dilution_value = available_dilution_shares * 0.5  # $0.50/share assumption
-        dilution_ratio = est_dilution_value / market_cap
+    # Available shares for dilution
+    if authorized_shares and outstanding_shares and market_cap:
+        available = authorized_shares - outstanding_shares
+        est_value = available * 0.5  # Assume 50 cents per share
+        dilution_ratio = est_value / market_cap
         if dilution_ratio > 1:
             score += 25
         elif dilution_ratio > 0.5:
-            score += 15
+            score += 20
         elif dilution_ratio > 0.25:
             score += 10
+        else:
+            score += 5
 
-    # Convertibles
-    if convertible_value_usd and market_cap:
-        ratio = convertible_value_usd / market_cap
-        if ratio > 0.5:
+    # Convertibles and Warrants
+    if convertibles_usd and market_cap:
+        convert_ratio = convertibles_usd / market_cap
+        if convert_ratio > 0.5:
             score += 20
-        elif ratio > 0.25:
+        elif convert_ratio > 0.25:
             score += 10
+        elif convert_ratio > 0.1:
+            score += 5
 
-    # Recent capital raises
-    if capital_raises_past_year >= 3:
+    # Capital Raises
+    if capital_raises_past_year >= 4:
         score += 15
-    elif capital_raises_past_year == 2:
+    elif capital_raises_past_year == 3:
         score += 10
+    elif capital_raises_past_year == 2:
+        score += 7
     elif capital_raises_past_year == 1:
-        score += 5
+        score += 4
 
     # Cash Runway
     if cash_runway_months is not None:
@@ -533,6 +545,7 @@ def calculate_dilution_pressure_score(
             score += 5
 
     return min(score, 100)
+
 
 # -------------------- Streamlit App --------------------
 st.title("Stock Analysis Dashboard")
