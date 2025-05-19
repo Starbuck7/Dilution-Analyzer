@@ -4,3 +4,4 @@ requests
 beautifulsoup4
 lxml
 sec-edgar-downloader
+html5lib
