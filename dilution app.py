@@ -3,12 +3,15 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import warnings
+import logging
 from bs4 import XMLParsedAsHTMLWarning
 from datetime import datetime, timedelta
 from yahoo_fin import stock_info as si
 from sec_edgar_downloader import Downloader
 dl = Downloader(email_address="ashleymcgavern@yahoo.com", company_name="Dilution Analyzer")
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # -------------------- Config --------------------
 USER_AGENT = {"User-Agent": "Ashley (ashleymcgavern@yahoo.com)"}
@@ -24,48 +27,49 @@ def get_cik_from_ticker(ticker):
 
 # -------------------- Module 1: Market Cap --------------------
 def get_market_cap(ticker):
+    # Try yfinance first
     try:
-        print(f"\n🔍 Attempting to fetch quote table for: {ticker}")
-        data = si.get_quote_table(ticker, dict_result=True)
-        print(f"📊 Quote table data: {data}\n")
-
-        # Try various possible keys
-        for key in data:
-            print(f"Checking key: {key} => {data[key]}")
-
-        market_cap_str = (
-            data.get("Market Cap") or
-            data.get("MarketCap") or
-            next((v for k, v in data.items() if "cap" in k.lower()), None)
-        )
-
-        if not market_cap_str:
-            print("❌ Market Cap not found in quote table.")
-            return None
-
-        print(f"✅ Raw market cap string: {market_cap_str}")
-
-        multiplier = 1
-        if market_cap_str.endswith("T"):
-            multiplier = 1_000_000_000_000
-        elif market_cap_str.endswith("B"):
-            multiplier = 1_000_000_000
-        elif market_cap_str.endswith("M"):
-            multiplier = 1_000_000
-        elif market_cap_str.endswith("K"):
-            multiplier = 1_000
-
-        numeric_part = market_cap_str[:-1].replace(",", "")
-        market_cap_value = float(numeric_part) * multiplier
-        print(f"✅ Parsed Market Cap: {market_cap_value}")
-        return market_cap_value
-
+        yf_ticker = yf.Ticker(ticker)
+        info = yf_ticker.info
+        market_cap = info.get('marketCap')
+        if market_cap:
+            logger.info(f"Market cap for {ticker} from yfinance: {market_cap}")
+            return market_cap
+        else:
+            logger.warning(f"yfinance returned None for marketCap of {ticker}")
     except Exception as e:
-        import traceback
-        print(f"❌ Exception occurred in get_market_cap(): {e}")
-        traceback.print_exc()
-        return None
+        logger.warning(f"yfinance failed for {ticker} with error: {e}")
 
+    # Fallback to yahoo_fin
+    try:
+        quote_table = si.get_quote_table(ticker, dict_result=True)
+        market_cap_str = quote_table.get('Market Cap')
+        if market_cap_str:
+            market_cap = _parse_market_cap_str(market_cap_str)
+            logger.info(f"Market cap for {ticker} from yahoo_fin: {market_cap}")
+            return market_cap
+        else:
+            logger.warning(f"yahoo_fin quote_table missing 'Market Cap' for {ticker}")
+    except Exception as e:
+        logger.warning(f"yahoo_fin failed for {ticker} with error: {e}")
+
+    logger.error(f"Could not retrieve market cap for {ticker}")
+    return None
+
+def _parse_market_cap_str(market_cap_str):
+    """
+    Converts strings like '1.5B', '300M', '850K' to an int number
+    """
+    try:
+        multipliers = {'B': 1e9, 'M': 1e6, 'K': 1e3}
+        if market_cap_str[-1] in multipliers:
+            return int(float(market_cap_str[:-1]) * multipliers[market_cap_str[-1]])
+        else:
+            # If no suffix, try to convert directly
+            return int(market_cap_str.replace(',', ''))
+    except Exception as e:
+        logger.warning(f"Failed to parse market cap string '{market_cap_str}': {e}")
+        return None
 
 
 # -------------------- Module 2: Cash Runway --------------------
