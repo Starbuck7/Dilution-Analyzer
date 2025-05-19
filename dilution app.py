@@ -78,21 +78,49 @@ def calculate_cash_runway(cash, burn):
 
 # -------------------- Module 3: ATM Offering Capacity --------------------
 def get_atm_offering(cik):
-    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-    res = requests.get(url, headers=USER_AGENT).json()
-    filings = res.get("filings", {}).get("recent", {})
-    for i, form in enumerate(filings.get("form", [])):
-        if form == "424B5":
-            accession = filings["accessionNumber"][i].replace("-", "")
-            doc = filings["primaryDocument"][i]
+    try:
+        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+        res = requests.get(url, headers=USER_AGENT)
+        if res.status_code != 200:
+            return None, None
+
+        filings = res.json().get("filings", {}).get("recent", {})
+        forms = filings.get("form", [])
+        accessions = filings.get("accessionNumber", [])
+        docs = filings.get("primaryDocument", [])
+        dates = filings.get("filingDate", [])
+
+        for i, form in enumerate(forms):
+            if form not in ["8-K", "S-3", "S-1", "424B5"]:
+                continue
+
+            if i >= len(accessions) or i >= len(docs):
+                continue
+
+            accession = accessions[i].replace("-", "")
+            doc = docs[i]
             html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
             html = requests.get(html_url, headers=USER_AGENT).text
-            text = BeautifulSoup(html, "lxml").get_text()
-            match = re.search(r"at-the-market[^$]*\$?([0-9,.]+)", text, re.IGNORECASE)
-            if match:
-                amount = float(match.group(1).replace(",", ""))
-                return amount, html_url
-    return None, None
+            text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
+
+            # Multiple ATM patterns to match different language styles
+            atm_patterns = [
+                r"at-the-market[^$]*?offering[^$]*?\$([0-9]+(?:\.[0-9]+)?)",
+                r"at the market offering[^$]*?\$([0-9]+(?:\.[0-9]+)?)",
+                r"ATM offering[^$]*?\$([0-9]+(?:\.[0-9]+)?)",
+                r"sales\s+agreement\s+for\s+up\s+to\s+\$([0-9]+(?:\.[0-9]+)?)"
+            ]
+
+            for pattern in atm_patterns:
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match:
+                    return float(match.group(1)), html_url
+
+        return None, None
+    except Exception as e:
+        print(f"Error in get_atm_offering: {e}")
+        return None, None
+
 
 # -------------------- Module 4: Authorized vs Outstanding Shares & Float --------------------
 def get_authorized_shares(cik):
