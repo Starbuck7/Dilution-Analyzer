@@ -25,23 +25,24 @@ def get_cik_from_ticker(ticker):
 # -------------------- Module 1: Market Cap --------------------
 def get_market_cap(ticker):
     try:
-        table = si.get_quote_table(ticker)
-        market_cap_str = table.get("Market Cap")
+        data = si.get_quote_table(ticker)
+        market_cap_str = data.get("Market Cap", "")
         if not market_cap_str:
             return None
-        
+
         multiplier = 1
-        if market_cap_str.endswith("B"):
+        if market_cap_str.endswith("T"):
+            multiplier = 1_000_000_000_000
+        elif market_cap_str.endswith("B"):
             multiplier = 1_000_000_000
         elif market_cap_str.endswith("M"):
             multiplier = 1_000_000
-        elif market_cap_str.endswith("K"):
-            multiplier = 1_000
 
-        return float(market_cap_str[:-1].replace(",", "")) * multiplier
+        return float(market_cap_str[:-1]) * multiplier
     except Exception as e:
-        print(f"[ERROR] Failed to fetch market cap for {ticker}: {e}")
+        print(f"Error getting market cap for {ticker}: {e}")
         return None
+
 
 # -------------------- Module 2: Cash Runway --------------------
 def get_cash_and_burn(cik):
