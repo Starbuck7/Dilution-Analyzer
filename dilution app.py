@@ -24,21 +24,23 @@ def get_cik_from_ticker(ticker):
 # -------------------- Module 1: Market Cap --------------------
 def get_market_cap(ticker):
     try:
-        market_cap = si.get_quote_table(ticker).get("Market Cap")
-        if market_cap:
-            # Convert string like '15.6M', '1.2B' to numeric
-            multiplier = 1
-            if market_cap[-1] == "B":
-                multiplier = 1_000_000_000
-            elif market_cap[-1] == "M":
-                multiplier = 1_000_000
-            elif market_cap[-1] == "K":
-                multiplier = 1_000
-            return float(market_cap[:-1].replace(",", "")) * multiplier
-    except Exception as e:
-        print(f"Error fetching market cap: {e}")
-    return None
+        table = si.get_quote_table(ticker)
+        market_cap_str = table.get("Market Cap")
+        if not market_cap_str:
+            return None
+        
+        multiplier = 1
+        if market_cap_str.endswith("B"):
+            multiplier = 1_000_000_000
+        elif market_cap_str.endswith("M"):
+            multiplier = 1_000_000
+        elif market_cap_str.endswith("K"):
+            multiplier = 1_000
 
+        return float(market_cap_str[:-1].replace(",", "")) * multiplier
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch market cap for {ticker}: {e}")
+        return None
 
 # -------------------- Module 2: Cash Runway --------------------
 def get_cash_and_burn(cik):
@@ -549,6 +551,7 @@ if ticker:
         # Market Cap
         market_cap = get_market_cap(ticker)
         st.subheader("1. Market Cap")
+        st.write(f"Market Cap: {market_cap}")
         st.write(f"${market_cap:,.0f}" if market_cap else "Not available")
 
         # Cash Runway
