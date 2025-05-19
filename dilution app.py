@@ -7,7 +7,6 @@ from bs4 import XMLParsedAsHTMLWarning
 from datetime import datetime, timedelta
 from yahoo_fin import stock_info as si
 from sec_edgar_downloader import Downloader
-
 dl = Downloader("ashleymcavern@yahoo.com")
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
