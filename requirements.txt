@@ -4,5 +4,5 @@ requests
 beautifulsoup4
 lxml
 sec-edgar-downloader>=4.4.0
-html5lib
+html5lib>=1.1
 requests_html
