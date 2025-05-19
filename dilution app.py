@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import re
 import warnings
 import logging
+import yfinance as yf
 from bs4 import XMLParsedAsHTMLWarning
 from datetime import datetime, timedelta
 from yahoo_fin import stock_info as si
@@ -27,7 +28,7 @@ def get_cik_from_ticker(ticker):
 
 # -------------------- Module 1: Market Cap --------------------
 def get_market_cap(ticker):
-    # Try yfinance first
+    # Try yfinance
     try:
         yf_ticker = yf.Ticker(ticker)
         info = yf_ticker.info
@@ -35,42 +36,42 @@ def get_market_cap(ticker):
         if market_cap:
             logger.info(f"Market cap for {ticker} from yfinance: {market_cap}")
             return market_cap
-        else:
-            logger.warning(f"yfinance returned None for marketCap of {ticker}")
     except Exception as e:
         logger.warning(f"yfinance failed for {ticker} with error: {e}")
 
-    # Fallback to yahoo_fin
+    # Try yahoo_fin.get_quote_table
     try:
         quote_table = si.get_quote_table(ticker, dict_result=True)
         market_cap_str = quote_table.get('Market Cap')
         if market_cap_str:
-            market_cap = _parse_market_cap_str(market_cap_str)
-            logger.info(f"Market cap for {ticker} from yahoo_fin: {market_cap}")
-            return market_cap
-        else:
-            logger.warning(f"yahoo_fin quote_table missing 'Market Cap' for {ticker}")
+            return _parse_market_cap_str(market_cap_str)
     except Exception as e:
-        logger.warning(f"yahoo_fin failed for {ticker} with error: {e}")
+        logger.warning(f"yahoo_fin.get_quote_table failed for {ticker} with error: {e}")
+
+    # Try yahoo_fin.get_stats_valuation
+    try:
+        val_table = si.get_stats_valuation(ticker)
+        if not val_table.empty:
+            mc_row = val_table[val_table.iloc[:, 0] == 'Market Cap (intraday)']
+            if not mc_row.empty:
+                market_cap_str = mc_row.iloc[0, 1]
+                return _parse_market_cap_str(market_cap_str)
+    except Exception as e:
+        logger.warning(f"yahoo_fin.get_stats_valuation failed for {ticker} with error: {e}")
 
     logger.error(f"Could not retrieve market cap for {ticker}")
     return None
 
 def _parse_market_cap_str(market_cap_str):
-    """
-    Converts strings like '1.5B', '300M', '850K' to an int number
-    """
     try:
         multipliers = {'B': 1e9, 'M': 1e6, 'K': 1e3}
         if market_cap_str[-1] in multipliers:
             return int(float(market_cap_str[:-1]) * multipliers[market_cap_str[-1]])
         else:
-            # If no suffix, try to convert directly
             return int(market_cap_str.replace(',', ''))
     except Exception as e:
         logger.warning(f"Failed to parse market cap string '{market_cap_str}': {e}")
         return None
-
 
 # -------------------- Module 2: Cash Runway --------------------
 def get_cash_and_burn(cik):
