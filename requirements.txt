@@ -3,3 +3,4 @@ yahoo_fin
 requests
 beautifulsoup4
 lxml
+sec-edgar-downloader
