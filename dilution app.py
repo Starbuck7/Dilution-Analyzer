@@ -6,6 +6,7 @@ import warnings
 from bs4 import XMLParsedAsHTMLWarning
 from datetime import datetime, timedelta
 from yahoo_fin import stock_info as si
+from sec_edgar_downloader import Downloader
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
@@ -392,46 +393,99 @@ def get_public_float(cik):
     return None
 
 # -------------------- Module 8: Offering Ability --------------------
-def get_shelf_registered_shares(cik):
-    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-    res = requests.get(url, headers=USER_AGENT).json()
-    filings = res.get("filings", {}).get("recent", {})
-    for i, form in enumerate(filings.get("form", [])):
-        if form in ["S-3", "S-1"]:
-            accession = filings["accessionNumber"][i].replace("-", "")
-            doc = filings["primaryDocument"][i]
-            html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-            html = requests.get(html_url, headers=USER_AGENT).text
-            text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
-            match = re.search(r"register[^$]*?\$?([0-9.]+)\s?(million|billion)?", text, re.IGNORECASE)
-            if match:
-                amount = float(match.group(1))
-                unit = match.group(2)
-                if unit == "billion":
-                    amount *= 1_000_000_000
-                elif unit == "million":
-                    amount *= 1_000_000
-                return amount
-    return None
+def get_shelf_registered_shares(cik, num_filings=10):
+    try:
+        cik_str = str(cik).zfill(10)
+        dl = Downloader("/tmp/sec")
+        
+        # Download recent S-3, S-1, and 424B3 filings
+        filing_types = ['S-3', 'S-1', '424B3']
+        all_text = ""
+
+        for form_type in filing_types:
+            dl.get(form_type, cik_str, amount=num_filings)
+            path = f"/tmp/sec/sec-edgar-filings/{cik_str}/{form_type.lower()}"
+            for subdir, _, files in os.walk(path):
+                for file in files:
+                    if file.endswith(".txt"):
+                        with open(os.path.join(subdir, file), "r", encoding="utf-8", errors="ignore") as f:
+                            text = f.read()
+                            all_text += "\n" + text
+
+        # Try to find registered USD amounts
+        dollar_matches = re.findall(
+            r"offer(?:ing)?(?: and sell)? (?:up to|of up to)?\s*\$([\d,.]+)\s*(million|billion)?",
+            all_text, re.IGNORECASE)
+
+        amounts = []
+        for match in dollar_matches:
+            num_str, magnitude = match
+            num = float(num_str.replace(",", "").strip())
+            if magnitude:
+                if magnitude.lower() == "million":
+                    num *= 1_000_000
+                elif magnitude.lower() == "billion":
+                    num *= 1_000_000_000
+            amounts.append(num)
+
+        # Fallback: Try to find registered share counts
+        share_matches = re.findall(
+            r"offer(?:ing)?(?: and sell)? (?:up to|of up to)?\s*([\d,.]+)\s*(shares|common stock)?",
+            all_text, re.IGNORECASE)
+
+        for match in share_matches:
+            num_str, _ = match
+            num = float(num_str.replace(",", "").strip())
+            # Assume nominal price of $1/share if no dollar value is found
+            amounts.append(num * 1.00)
+
+        if amounts:
+            return max(amounts)
+
+        return None
+
+    except Exception as e:
+        print(f"Error extracting shelf registered shares: {e}")
+        return None
 
 def estimate_offering_ability(cik):
-    authorized = get_authorized_shares(cik)
-    outstanding = get_outstanding_shares(cik)
-    atm_capacity, _ = get_atm_offering(cik)
-    public_float = get_public_float(cik)
-    shelf_registered = get_shelf_registered_shares(cik)
+    try:
+        authorized = get_authorized_shares(cik)
+        outstanding = get_outstanding_shares(cik)
+        available_shares = max(authorized - outstanding, 0) if authorized and outstanding else None
 
-    available_shares = (authorized - outstanding) if authorized and outstanding else 0
-    max_baby_shelf = (public_float / 3) if public_float else 0
-    offering_ceiling = min(max_baby_shelf, (shelf_registered or 0) + (atm_capacity or 0))
+        # ATM Capacity
+        atm_usd, _ = get_atm_offering(cik)
 
-    return {
-        "Available Shares": available_shares,
-        "ATM Capacity": atm_capacity,
-        "Shelf Registered Shares": shelf_registered,
-        "Max Baby Shelf": max_baby_shelf,
-        "Offering Ceiling": offering_ceiling
-    }
+        # Shelf Shares (estimated)
+        shelf_usd = get_shelf_registered_shares(cik)
+
+        # Public float estimate (for Baby Shelf Rule)
+        float_shares = get_public_float(cik)
+        float_price = get_last_close_price(ticker)
+        max_baby_shelf = None
+        if float_shares and float_price:
+            float_value = float_shares * float_price
+            if float_value < 75000000:  # If company qualifies for baby shelf rule
+                max_baby_shelf = float_value / 3
+
+        # Offering ceiling = most restrictive cap
+        ceiling_usd = min([
+            x for x in [atm_usd, shelf_usd, max_baby_shelf] if x is not None
+        ], default=0)
+
+        return {
+            "Available Shares": available_shares,
+            "ATM Capacity": atm_usd,
+            "Shelf Registered Shares": shelf_usd,
+            "Max Baby Shelf": max_baby_shelf,
+            "Offering Ceiling": ceiling_usd
+        }
+
+    except Exception as e:
+        print(f"Error estimating offering ability: {e}")
+        return {}
+
 
 #-------------MODULE 9: CALCULATIONG DILUTION PRESSURE SCORE ------------
 def get_atm_capacity_score(atm_capacity_usd, market_cap):
