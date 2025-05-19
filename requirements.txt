@@ -3,6 +3,6 @@ yahoo_fin
 requests
 beautifulsoup4
 lxml
-sec-edgar-downloader
+--upgrade sec-edgar-downloader
 html5lib
 requests_html
