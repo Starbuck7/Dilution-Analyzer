@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from yahoo_fin import stock_info as si
 from sec_edgar_downloader import Downloader
 
+dl = Downloader("ashleymcavern@yahoo.com")
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 # -------------------- Config --------------------
@@ -471,6 +472,13 @@ def get_shelf_registered_shares(cik, num_filings=10):
 
     except Exception as e:
         print(f"Error extracting shelf registered shares: {e}")
+        return None
+
+def get_last_close_price(ticker):
+    try:
+        return si.get_live_price(ticker)
+    except Exception as e:
+        print(f"Error fetching last close price: {e}")
         return None
 
 def estimate_offering_ability(cik):
