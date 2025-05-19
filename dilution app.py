@@ -25,9 +25,13 @@ def get_cik_from_ticker(ticker):
 # -------------------- Module 1: Market Cap --------------------
 def get_market_cap(ticker):
     try:
+        print(f"Getting quote table for {ticker}...")
         data = si.get_quote_table(ticker)
-        market_cap_str = data.get("Market Cap", "")
+        print(f"Quote table for {ticker}: {data}")
+
+        market_cap_str = data.get("Market Cap")
         if not market_cap_str:
+            print("Market Cap not found in quote table.")
             return None
 
         multiplier = 1
@@ -38,9 +42,11 @@ def get_market_cap(ticker):
         elif market_cap_str.endswith("M"):
             multiplier = 1_000_000
 
-        return float(market_cap_str[:-1]) * multiplier
+        market_cap_value = float(market_cap_str[:-1]) * multiplier
+        print(f"Parsed Market Cap: {market_cap_value}")
+        return market_cap_value
     except Exception as e:
-        print(f"Error getting market cap for {ticker}: {e}")
+        print(f"Exception in get_market_cap(): {e}")
         return None
 
 
