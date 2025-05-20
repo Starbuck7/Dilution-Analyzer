@@ -142,6 +142,10 @@ def get_cash_runway(ticker):
     logger.error(f"{ticker}: Could not determine cash runway from 10-Q or 10-K.")
     return None
 
+def calculate_cash_runway(cash, burn):
+    if cash is None or burn is None or burn == 0:
+        return None
+    return cash / burn
 
 # -------------------- Module 3: ATM Offering Capacity --------------------
 def get_atm_offering(cik):
