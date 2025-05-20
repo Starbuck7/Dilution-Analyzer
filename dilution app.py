@@ -681,10 +681,10 @@ if ticker:
         st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
 
         # Cash Runway
-        cash, burn = get_cash_and_burn(cik)
+        cash, burn = get_cash_and_monthly_burn(cik)
         runway = calculate_cash_runway(cash, burn)
         st.subheader("2. Cash Runway")
-        if cash is not None and burn is not None:
+        if cash is not None and monthly_burn is not None:
             st.write(f"Cash: ${cash:,.0f}")
             st.write(f"Monthly Burn: ${burn:,.0f}")
             st.write(f"Runway: {runway:.1f} months")
