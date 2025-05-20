@@ -78,7 +78,7 @@ def _parse_market_cap_str(market_cap_str):
 def get_cash_and_burn_from_dl(ticker):
     for filing_type in ["10-Q", "10-K"]:
         try:
-            dl.get(filing_type, ticker, amount=1)
+            dl.get(filing_type, ticker)  # ✅ Removed 'amount=1'
             filing_dir = dl.get_filing_directory(filing_type, ticker)
             latest_file = next((f for f in os.listdir(filing_dir) if f.endswith(".txt") or f.endswith(".htm")), None)
             if not latest_file:
@@ -91,18 +91,16 @@ def get_cash_and_burn_from_dl(ticker):
             cash = extract_cash(text)
             burn = extract_burn_rate(text)
 
-            if burn:
-                months = 3 if filing_type == "10-Q" else 12
-                burn = burn / months  # Convert to monthly
-
-            if cash or burn:
+            if cash is not None or burn is not None:
                 return cash, burn
 
         except Exception as e:
             logger.error(f"{ticker}: Failed to extract cash/burn: {e}")
             continue
 
+    logger.error(f"{ticker}: Could not determine cash or burn from filings.")
     return None, None
+
 
 def parse_dollar_amount(text):
     match = re.search(r'\$?\(?([\d,.]+)\)?', text)
@@ -715,7 +713,6 @@ if ticker:
         # Market Cap
         market_cap = get_market_cap(ticker)
         st.subheader("1. Market Cap")
-        st.write(f"Market Cap: {market_cap}")
         st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
 
         # Cash Runway
