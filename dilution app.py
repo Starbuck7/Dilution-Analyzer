@@ -77,12 +77,6 @@ def _parse_market_cap_str(market_cap_str):
 # -------------------- Module 2: Cash Runway --------------------
 # -------------------- Module 2: Cash Runway (SEC Downloader based) --------------------
 
-import os
-import re
-import logging
-
-logger = logging.getLogger(__name__)
-
 def parse_dollar_amount(text):
     match = re.search(r'\$?\(?([\d,.]+)\)?', text)
     if match:
@@ -114,29 +108,46 @@ def extract_burn_rate(text):
     return None
 
 def get_cash_and_burn_from_dl(ticker, dl):
-    """Extracts cash and burn from locally downloaded filings via Downloader"""
-    for filing_type in ["10-Q", "10-K"]:
-        try:
-            filing_dir = dl.get_filing_directory(filing_type, ticker)
-            latest_file = next((f for f in os.listdir(filing_dir) if f.endswith(".txt") or f.endswith(".htm")), None)
-            if not latest_file:
+    """Extract cash and burn from local SEC filings downloaded using Downloader."""
+    try:
+        base_path = dl.save_location  # typically "./sec-edgar-filings"
+
+        for form_type in ["10-Q", "10-K"]:
+            form_path = os.path.join(base_path, ticker, form_type)
+            if not os.path.exists(form_path):
                 continue
 
-            with open(os.path.join(filing_dir, latest_file), 'r', encoding='utf-8', errors='ignore') as f:
-                text = f.read().lower()
+            subdirs = sorted(
+                [os.path.join(form_path, d) for d in os.listdir(form_path)],
+                key=os.path.getmtime,
+                reverse=True
+            )
+            for subdir in subdirs:
+                try:
+                    # Find the main filing .txt or .html file
+                    filenames = [f for f in os.listdir(subdir) if f.endswith((".txt", ".htm", ".html"))]
+                    if not filenames:
+                        continue
 
-            cash = extract_cash(text)
-            burn = extract_burn_rate(text)
+                    filepath = os.path.join(subdir, filenames[0])
+                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                        text = f.read().lower()
 
-            months = 3 if filing_type == "10-Q" else 12
-            monthly_burn = (burn / months) if burn else None
+                    cash = extract_cash(text)
+                    burn = extract_burn_rate(text)
 
-            logger.info(f"{ticker} cash: {cash}, monthly burn: {monthly_burn}")
-            return cash, monthly_burn
+                    months = 3 if form_type == "10-Q" else 12
+                    monthly_burn = (burn / months) if burn else None
 
-        except Exception as e:
-            logger.error(f"{ticker}: Failed to extract cash/burn from {filing_type}: {e}")
-            continue
+                    logger.info(f"{ticker} cash: {cash}, monthly burn: {monthly_burn}")
+                    return cash, monthly_burn
+
+                except Exception as e:
+                    logger.error(f"{ticker}: Failed to parse filing in {subdir}: {e}")
+                    continue
+
+    except Exception as e:
+        logger.error(f"{ticker}: Failed to extract cash/burn from filings: {e}")
 
     logger.error(f"{ticker}: Could not determine cash or burn from filings.")
     return None, None
