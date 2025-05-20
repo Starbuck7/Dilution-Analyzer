@@ -539,27 +539,25 @@ def estimate_offering_ability(cik):
 
 
 #-------------MODULE 9: CALCULATIONG DILUTION PRESSURE SCORE ------------
+# ------------- Module 9: Primary Cash/Burn Scraper ----------------
 def get_cash_and_burn(cik):
-    """Extract cash and burn rate from recent 10-Q or 10-K filings."""
     try:
-        docs = get_filing_urls(cik, form_types=["10-Q", "10-K"])  # fallback to 10-K
+        docs = get_filing_urls(cik, form_types=["10-Q", "10-K"])
         for doc in docs:
             text = extract_text_from_filing(doc["url"])
 
-            # Cash regex patterns
             cash_patterns = [
-                r"cash and cash equivalents(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
-                r"we had approximately\s+\$?([\d,]+\.?\d*)\s+in cash",
-                r"as of .*? we had cash.*? \$?([\d,]+\.?\d*)",
-                r"total cash(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
+                r"cash and cash equivalents[^$\d]{0,20}\$?([\d,]+\.?\d*)",
+                r"we had approximately[^$\d]{0,20}\$?([\d,]+\.?\d*)\s+in cash",
+                r"as of .*? we had cash.*?\$?([\d,]+\.?\d*)",
+                r"total cash[^$\d]{0,20}\$?([\d,]+\.?\d*)",
             ]
 
-            # Burn rate patterns
             burn_patterns = [
-                r"monthly burn rate(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
-                r"we are burning approximately\s+\$?([\d,]+\.?\d*)\s+per month",
-                r"average monthly cash use(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
-                r"monthly cash burn(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
+                r"monthly burn rate[^$\d]{0,20}\$?([\d,]+\.?\d*)",
+                r"we are burning approximately[^$\d]{0,20}\$?([\d,]+\.?\d*)\s+per month",
+                r"average monthly cash use[^$\d]{0,20}\$?([\d,]+\.?\d*)",
+                r"monthly cash burn[^$\d]{0,20}\$?([\d,]+\.?\d*)",
             ]
 
             def search_patterns(patterns):
@@ -576,8 +574,7 @@ def get_cash_and_burn(cik):
                 return cash, burn
 
     except Exception as e:
-        print(f"Error extracting cash/burn: {e}")
-
+        logger.error(f"{cik}: Failed to extract cash/burn: {e}")
     return None, None
 
 def get_atm_capacity_score(atm_capacity_usd, market_cap):
@@ -723,14 +720,16 @@ if ticker:
 
         runway = calculate_cash_runway(cash, burn)
 
+        # Display
         st.subheader("2. Cash Runway")
-        if cash is not None and burn is not None:
+        if cash:
             st.write(f"Cash: ${cash:,.0f}")
-            st.write(f"Monthly Burn: ${burn:,.0f}")
+        if burn:
+            st.write(f"Monthly Burn Rate: ${burn:,.0f}")
+        if runway:
             st.write(f"Runway: {runway:.1f} months")
         else:
-            st.write("Cash or burn rate not found.")
-
+            st.warning("Cash or burn rate not found.")
 
         # ATM Offering
         atm, atm_url = get_atm_offering(cik)
