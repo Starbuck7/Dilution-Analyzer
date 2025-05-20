@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import re
 import warnings
 import logging
+import os
 import yfinance as yf
 from bs4 import XMLParsedAsHTMLWarning
 from datetime import datetime, timedelta
@@ -74,53 +75,73 @@ def _parse_market_cap_str(market_cap_str):
         return None
 
 # -------------------- Module 2: Cash Runway --------------------
-def get_cash_and_burn(cik):
-    try:
-        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-        res = requests.get(url, headers=USER_AGENT)
-        if res.status_code != 200:
-            return None, None
-
-        filings = res.json().get("filings", {}).get("recent", {})
-        forms = filings.get("form", [])
-        accessions = filings.get("accessionNumber", [])
-        docs = filings.get("primaryDocument", [])
-        dates = filings.get("filingDate", [])
-
-        for i, form in enumerate(forms):
-            if form not in ["10-Q", "10-K"]:
-                continue
-            if i >= len(accessions) or i >= len(docs):
-                continue
-
-            accession = accessions[i].replace("-", "")
-            doc = docs[i]
-            html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-            html = requests.get(html_url, headers=USER_AGENT).text
-            text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
-
-            # Look for cash
-            cash_match = re.search(
-                r"(?i)(cash and cash equivalents|cash position)\s*[\$:]*\s*([0-9]{1,3}(?:[0-9\s]*[0-9]))", text)
-            cash = int(cash_match.group(2).replace(" ", "")) if cash_match else None
-
-            # Look for burn rate: sometimes referred to as "net cash used in operating activities"
-            burn_match = re.search(
-                r"(?i)(net cash used in operating activities)[^\$0-9\-]{0,20}[\$:]*\s*\(?-?([0-9]{1,3}(?:[0-9\s]*[0-9]))\)?", text)
-            burn = int(burn_match.group(2).replace(" ", "")) / 3 if burn_match else None  # quarterly to monthly
-
-            if cash or burn:
-                return cash, abs(burn) if burn else None
-
-        return None, None
-    except Exception as e:
-        print(f"Error in get_cash_and_burn: {e}")
-        return None, None
-
-def calculate_cash_runway(cash, burn):
-    if cash and burn:
-        return cash / burn
+def parse_dollar_amount(text):
+    match = re.search(r'\$?\(?([\d,.]+)\)?', text)
+    if match:
+        amount = match.group(1).replace(",", "")
+        return float(amount)
     return None
+
+def extract_cash(text):
+    # Try various common cash line patterns
+    patterns = [
+        r'cash and cash equivalents\s*(?:at end of period)?\s*\$?\(?([\d,\.]+)\)?',
+        r'cash\s+and\s+short-term\s+investments\s*\$?\(?([\d,\.]+)\)?',
+        r'cash\s*\$?\(?([\d,\.]+)\)?'
+    ]
+    for pat in patterns:
+        match = re.search(pat, text, re.IGNORECASE)
+        if match:
+            return parse_dollar_amount(match.group(0))
+    return None
+
+def extract_burn_rate(text):
+    patterns = [
+        r'net cash used in operating activities\s*\$?\(?([\d,\.]+)\)?',
+        r'net\s+cash\s+provided\s+by\s+operating\s+activities\s*\(used\)\s*\$?\(?([\d,\.]+)\)?'
+    ]
+    for pat in patterns:
+        match = re.search(pat, text, re.IGNORECASE)
+        if match:
+            return parse_dollar_amount(match.group(0))
+    return None
+
+def get_cash_runway(ticker):
+    for filing_type in ["10-Q", "10-K"]:
+        try:
+            dl.get(filing_type, ticker, amount=1)
+            filing_dir = dl.get_filing_directory(filing_type, ticker)
+            latest_file = next((f for f in os.listdir(filing_dir) if f.endswith(".txt") or f.endswith(".htm")), None)
+            if not latest_file:
+                continue  # try next filing type
+
+            filepath = os.path.join(filing_dir, latest_file)
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                text = f.read().lower()
+
+            cash = extract_cash(text)
+            burn = extract_burn_rate(text)
+
+            if burn:
+                months = 3 if filing_type == "10-Q" else 12
+                monthly_burn = burn / months
+            else:
+                monthly_burn = None
+
+            if cash and monthly_burn and monthly_burn > 0:
+                runway = round(cash / monthly_burn, 1)
+                logger.info(f"{ticker} cash: {cash}, monthly burn: {monthly_burn}, runway: {runway} months")
+                return runway
+            else:
+                logger.warning(f"{ticker}: cash or burn not found in {filing_type}. Cash: {cash}, Burn: {burn}")
+
+        except Exception as e:
+            logger.error(f"{ticker}: failed to get runway from {filing_type} due to: {e}")
+            continue  # fallback to 10-K if 10-Q fails
+
+    logger.error(f"{ticker}: Could not determine cash runway from 10-Q or 10-K.")
+    return None
+
 
 # -------------------- Module 3: ATM Offering Capacity --------------------
 def get_atm_offering(cik):
@@ -573,7 +594,7 @@ def calculate_dilution_pressure_score(
     outstanding_shares,
     convertibles_usd,
     capital_raises_past_year,
-    cash_runway_months,
+    cash_runway,
     market_cap
 ):
     score = 0
@@ -627,12 +648,12 @@ def calculate_dilution_pressure_score(
         score += 4
 
     # Cash Runway
-    if cash_runway_months is not None:
-        if cash_runway_months < 3:
+    if cash_runway is not None:
+        if cash_runway < 3:
             score += 15
-        elif cash_runway_months < 6:
+        elif cash_runway < 6:
             score += 10
-        elif cash_runway_months < 12:
+        elif cash_runway < 12:
             score += 5
 
     return min(score, 100)
@@ -660,7 +681,6 @@ if ticker:
         st.write(f"${market_cap:,.0f}" if market_cap else "Not available")
 
         # Cash Runway
-        cash, burn = get_cash_and_burn(cik)
         runway = calculate_cash_runway(cash, burn)
         st.subheader("2. Cash Runway")
         if cash and burn:
@@ -730,7 +750,7 @@ if ticker:
                 outstanding_shares=outstanding,  # from get_outstanding_shares()
                 convertibles_usd=convertible_total_usd,  # estimate total from instruments
                 capital_raises_past_year=num_raises_past_year,  # len of filtered raises
-                cash_runway_months=runway,  # from calculate_cash_runway()
+                cash_runway=runway,  # from calculate_cash_runway()
                 market_cap=market_cap  # from get_market_cap()
             )
 
