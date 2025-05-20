@@ -75,6 +75,35 @@ def _parse_market_cap_str(market_cap_str):
         return None
 
 # -------------------- Module 2: Cash Runway --------------------
+def get_cash_and_burn_from_dl(ticker):
+    for filing_type in ["10-Q", "10-K"]:
+        try:
+            dl.get(filing_type, ticker, amount=1)
+            filing_dir = dl.get_filing_directory(filing_type, ticker)
+            latest_file = next((f for f in os.listdir(filing_dir) if f.endswith(".txt") or f.endswith(".htm")), None)
+            if not latest_file:
+                continue
+
+            filepath = os.path.join(filing_dir, latest_file)
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                text = f.read().lower()
+
+            cash = extract_cash(text)
+            burn = extract_burn_rate(text)
+
+            if burn:
+                months = 3 if filing_type == "10-Q" else 12
+                burn = burn / months  # Convert to monthly
+
+            if cash or burn:
+                return cash, burn
+
+        except Exception as e:
+            logger.error(f"{ticker}: Failed to extract cash/burn: {e}")
+            continue
+
+    return None, None
+
 def parse_dollar_amount(text):
     match = re.search(r'\$?\(?([\d,.]+)\)?', text)
     if match:
@@ -104,42 +133,6 @@ def extract_burn_rate(text):
         match = re.search(pat, text, re.IGNORECASE)
         if match:
             return parse_dollar_amount(match.group(0))
-    return None
-
-def get_cash_runway(ticker):
-    for filing_type in ["10-Q", "10-K"]:
-        try:
-            dl.get(filing_type, ticker, amount=1)
-            filing_dir = dl.get_filing_directory(filing_type, ticker)
-            latest_file = next((f for f in os.listdir(filing_dir) if f.endswith(".txt") or f.endswith(".htm")), None)
-            if not latest_file:
-                continue  # try next filing type
-
-            filepath = os.path.join(filing_dir, latest_file)
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                text = f.read().lower()
-
-            cash = extract_cash(text)
-            burn = extract_burn_rate(text)
-
-            if burn:
-                months = 3 if filing_type == "10-Q" else 12
-                monthly_burn = burn / months
-            else:
-                monthly_burn = None
-
-            if cash and monthly_burn and monthly_burn > 0:
-                runway = round(cash / monthly_burn, 1)
-                logger.info(f"{ticker} cash: {cash}, monthly burn: {monthly_burn}, runway: {runway} months")
-                return runway
-            else:
-                logger.warning(f"{ticker}: cash or burn not found in {filing_type}. Cash: {cash}, Burn: {burn}")
-
-        except Exception as e:
-            logger.error(f"{ticker}: failed to get runway from {filing_type} due to: {e}")
-            continue  # fallback to 10-K if 10-Q fails
-
-    logger.error(f"{ticker}: Could not determine cash runway from 10-Q or 10-K.")
     return None
 
 def calculate_cash_runway(cash, burn):
@@ -726,8 +719,15 @@ if ticker:
         st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
 
         # Cash Runway
-        cash, burn = get_cash_and_burn(cik)  # <-- Make sure this is here
+        # Try natural language parser first (from Module 9)
+        cash, burn = get_cash_and_burn(cik)
+
+        # If not found, try structured data parser (from Module 2)
+        if not cash or not burn:
+            cash, burn = get_cash_and_burn_from_dl(ticker)
+
         runway = calculate_cash_runway(cash, burn)
+
         st.subheader("2. Cash Runway")
         if cash is not None and burn is not None:
             st.write(f"Cash: ${cash:,.0f}")
@@ -735,6 +735,7 @@ if ticker:
             st.write(f"Runway: {runway:.1f} months")
         else:
             st.write("Cash or burn rate not found.")
+
 
         # ATM Offering
         atm, atm_url = get_atm_offering(cik)
