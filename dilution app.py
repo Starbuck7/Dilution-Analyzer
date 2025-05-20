@@ -721,17 +721,16 @@ if ticker:
         st.write(f"Market Cap: {market_cap}")
         st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
 
-        # Cash Runway
-        runway = get_cash_runway(cash, burn)
-        cash, burn = get_cash_and_burn(cik)
-        st.subheader("2. Cash Runway")
-        if cash is not None and burn is not None:
-            st.write(f"Cash: ${cash:,.0f}")
-            st.write(f"Monthly Burn: ${burn:,.0f}")
-            st.write(f"Runway: {runway:.1f} months")
-        else:
-            st.write("Cash or burn rate not found.")
-
+       # Cash Runway
+       cash, burn = get_cash_and_burn(cik)  # <-- Make sure this is here
+       runway = calculate_cash_runway(cash, burn)
+       st.subheader("2. Cash Runway")
+       if cash is not None and burn is not None:
+           st.write(f"Cash: ${cash:,.0f}")
+           st.write(f"Monthly Burn: ${burn:,.0f}")
+           st.write(f"Runway: {runway:.1f} months")
+       else:
+           st.write("Cash or burn rate not found.")
 
         # ATM Offering
         atm, atm_url = get_atm_offering(cik)
