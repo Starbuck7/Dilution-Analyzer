@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from yahoo_fin import stock_info as si
 from sec_edgar_downloader import Downloader
 dl = Downloader(email_address="ashleymcgavern@yahoo.com", company_name="Dilution Analyzer")
+dl.get("10-Q", "ticker")
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -740,8 +741,7 @@ if ticker:
         # If not found, try structured data parser (from Module 2)
         if not cash or not burn:
             cash, burn = get_cash_and_burn_from_dl(ticker, dl)
-
-        runway = calculate_cash_runway(cash, burn)
+            runway = calculate_cash_runway(cash, burn)
 
         # Display
         st.subheader("2. Cash Runway")
