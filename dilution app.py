@@ -678,17 +678,19 @@ if ticker:
         market_cap = get_market_cap(ticker)
         st.subheader("1. Market Cap")
         st.write(f"Market Cap: {market_cap}")
-        st.write(f"${market_cap:,.0f}" if market_cap else "Not available")
+        st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
 
         # Cash Runway
+        cash, burn = get_cash_and_burn(cik)
         runway = calculate_cash_runway(cash, burn)
         st.subheader("2. Cash Runway")
-        if cash and burn:
+        if cash is not None and burn is not None:
             st.write(f"Cash: ${cash:,.0f}")
             st.write(f"Monthly Burn: ${burn:,.0f}")
             st.write(f"Runway: {runway:.1f} months")
         else:
             st.write("Cash or burn rate not found.")
+
 
         # ATM Offering
         atm, atm_url = get_atm_offering(cik)
@@ -756,6 +758,7 @@ if ticker:
 
 
             st.subheader("8. Dilution Pressure Score")
+            st.caption("Combines cash runway, ATM capacity, dilution ability, and more to assess dilution risk.")
             if score is not None:
                 st.metric("Score (0-100)", f"{score}")
                 if score > 70:
