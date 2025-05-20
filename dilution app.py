@@ -75,39 +75,6 @@ def _parse_market_cap_str(market_cap_str):
         return None
 
 # -------------------- Module 2: Cash Runway --------------------
-def get_cash_and_burn_from_dl(ticker):
-    base_dir = "sec-edgar-filings"  # or whatever you passed to Downloader()
-    for filing_type in ["10-Q", "10-K"]:
-        try:
-            dl.get(filing_type, ticker)
-
-            # Build path manually
-            filing_path = os.path.join(base_dir, ticker, filing_type)
-            if not os.path.exists(filing_path):
-                continue
-
-            # Find latest .txt or .htm file
-            for root, dirs, files in os.walk(filing_path):
-                for file in files:
-                    if file.endswith(".txt") or file.endswith(".htm"):
-                        filepath = os.path.join(root, file)
-                        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                            text = f.read().lower()
-
-                        cash = extract_cash(text)
-                        burn = extract_burn_rate(text)
-
-                        if cash is not None or burn is not None:
-                            return cash, burn
-                        break  # Done once we process the first one
-
-        except Exception as e:
-            logger.error(f"{ticker}: Failed to extract cash/burn: {e}")
-            continue
-
-    logger.error(f"{ticker}: Could not determine cash or burn from filings.")
-    return None, None
-
 def parse_dollar_amount(text):
     match = re.search(r'\$?\(?([\d,.]+)\)?', text)
     if match:
@@ -116,7 +83,6 @@ def parse_dollar_amount(text):
     return None
 
 def extract_cash(text):
-    # Try various common cash line patterns
     patterns = [
         r'cash and cash equivalents\s*(?:at end of period)?\s*\$?\(?([\d,\.]+)\)?',
         r'cash\s+and\s+short-term\s+investments\s*\$?\(?([\d,\.]+)\)?',
@@ -138,6 +104,32 @@ def extract_burn_rate(text):
         if match:
             return parse_dollar_amount(match.group(0))
     return None
+
+def get_cash_and_burn(ticker):
+    try:
+        for filing_type in ["10-Q", "10-K"]:
+            dl.get(filing_type, ticker)
+
+            filing_dir = os.path.join("sec-edgar-filings", ticker, filing_type)
+            if not os.path.exists(filing_dir):
+                continue
+
+            # Grab latest filing
+            for root, _, files in os.walk(filing_dir):
+                for file in sorted(files, reverse=True):
+                    if file.endswith(".txt") or file.endswith(".htm"):
+                        with open(os.path.join(root, file), "r", encoding="utf-8", errors="ignore") as f:
+                            text = f.read().lower()
+
+                        cash = extract_cash(text)
+                        burn = extract_burn_rate(text)
+
+                        if cash or burn:
+                            return cash, burn
+        return None, None
+    except Exception as e:
+        logger.error(f"{ticker}: Failed to extract cash/burn: {e}")
+        return None, None
 
 def calculate_cash_runway(cash, burn):
     if cash is None or burn is None or burn == 0:
