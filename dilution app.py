@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 from yahoo_fin import stock_info as si
 from sec_edgar_downloader import Downloader
 dl = Downloader(email_address="ashleymcgavern@yahoo.com", company_name="Dilution Analyzer")
-dl.get("10-Q", "ticker")
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -77,6 +76,8 @@ def _parse_market_cap_str(market_cap_str):
 
 # -------------------- Module 2: Cash Runway --------------------
 # -------------------- Module 2: Cash Runway (SEC Downloader based) --------------------
+dl.get("10-Q", ticker)
+dl.get("10-K", ticker)
 
 def parse_dollar_amount(text):
     match = re.search(r'\$?\(?([\d,.]+)\)?', text)
