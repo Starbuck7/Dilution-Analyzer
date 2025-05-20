@@ -546,6 +546,47 @@ def estimate_offering_ability(cik):
 
 
 #-------------MODULE 9: CALCULATIONG DILUTION PRESSURE SCORE ------------
+def get_cash_and_burn(cik):
+    """Extract cash and burn rate from recent 10-Q or 10-K filings."""
+    try:
+        docs = get_filing_urls(cik, form_types=["10-Q", "10-K"])  # fallback to 10-K
+        for doc in docs:
+            text = extract_text_from_filing(doc["url"])
+
+            # Cash regex patterns
+            cash_patterns = [
+                r"cash and cash equivalents(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
+                r"we had approximately\s+\$?([\d,]+\.?\d*)\s+in cash",
+                r"as of .*? we had cash.*? \$?([\d,]+\.?\d*)",
+                r"total cash(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
+            ]
+
+            # Burn rate patterns
+            burn_patterns = [
+                r"monthly burn rate(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
+                r"we are burning approximately\s+\$?([\d,]+\.?\d*)\s+per month",
+                r"average monthly cash use(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
+                r"monthly cash burn(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
+            ]
+
+            def search_patterns(patterns):
+                for pattern in patterns:
+                    match = re.search(pattern, text, re.IGNORECASE)
+                    if match:
+                        return float(match.group(1).replace(",", ""))
+                return None
+
+            cash = search_patterns(cash_patterns)
+            burn = search_patterns(burn_patterns)
+
+            if cash is not None or burn is not None:
+                return cash, burn
+
+    except Exception as e:
+        print(f"Error extracting cash/burn: {e}")
+
+    return None, None
+
 def get_atm_capacity_score(atm_capacity_usd, market_cap):
     if not market_cap or not atm_capacity_usd:
         return 10  # neutral if missing
@@ -681,10 +722,10 @@ if ticker:
         st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
 
         # Cash Runway
-        cash, burn = get_cash_and_monthly_burn(cik)
+        cash, burn = get_cash_and_burn(cik)
         runway = calculate_cash_runway(cash, burn)
         st.subheader("2. Cash Runway")
-        if cash is not None and monthly_burn is not None:
+        if cash is not None and burn is not None:
             st.write(f"Cash: ${cash:,.0f}")
             st.write(f"Monthly Burn: ${burn:,.0f}")
             st.write(f"Runway: {runway:.1f} months")
