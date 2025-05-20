@@ -723,7 +723,7 @@ if ticker:
 
         # Cash Runway
         cash, burn = get_cash_and_burn(cik)
-        runway = calculate_cash_runway(cash, burn)
+        runway = get_cash_runway(cash, burn)
         st.subheader("2. Cash Runway")
         if cash is not None and burn is not None:
             st.write(f"Cash: ${cash:,.0f}")
