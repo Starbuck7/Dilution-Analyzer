@@ -75,6 +75,14 @@ def _parse_market_cap_str(market_cap_str):
         return None
 
 # -------------------- Module 2: Cash Runway --------------------
+# -------------------- Module 2: Cash Runway (SEC Downloader based) --------------------
+
+import os
+import re
+import logging
+
+logger = logging.getLogger(__name__)
+
 def parse_dollar_amount(text):
     match = re.search(r'\$?\(?([\d,.]+)\)?', text)
     if match:
@@ -84,7 +92,7 @@ def parse_dollar_amount(text):
 
 def extract_cash(text):
     patterns = [
-        r'cash and cash equivalents\s*(?:at end of period)?\s*\$?\(?([\d,\.]+)\)?',
+        r'cash and cash equivalents(?: at end of period)?\s*\$?\(?([\d,\.]+)\)?',
         r'cash\s+and\s+short-term\s+investments\s*\$?\(?([\d,\.]+)\)?',
         r'cash\s*\$?\(?([\d,\.]+)\)?'
     ]
@@ -105,36 +113,38 @@ def extract_burn_rate(text):
             return parse_dollar_amount(match.group(0))
     return None
 
-def get_cash_and_burn(ticker):
-    try:
-        for filing_type in ["10-Q", "10-K"]:
-            dl.get(filing_type, ticker)
-
-            filing_dir = os.path.join("sec-edgar-filings", ticker, filing_type)
-            if not os.path.exists(filing_dir):
+def get_cash_and_burn_from_dl(ticker, dl):
+    """Extracts cash and burn from locally downloaded filings via Downloader"""
+    for filing_type in ["10-Q", "10-K"]:
+        try:
+            filing_dir = dl.get_filing_directory(filing_type, ticker)
+            latest_file = next((f for f in os.listdir(filing_dir) if f.endswith(".txt") or f.endswith(".htm")), None)
+            if not latest_file:
                 continue
 
-            # Grab latest filing
-            for root, _, files in os.walk(filing_dir):
-                for file in sorted(files, reverse=True):
-                    if file.endswith(".txt") or file.endswith(".htm"):
-                        with open(os.path.join(root, file), "r", encoding="utf-8", errors="ignore") as f:
-                            text = f.read().lower()
+            with open(os.path.join(filing_dir, latest_file), 'r', encoding='utf-8', errors='ignore') as f:
+                text = f.read().lower()
 
-                        cash = extract_cash(text)
-                        burn = extract_burn_rate(text)
+            cash = extract_cash(text)
+            burn = extract_burn_rate(text)
 
-                        if cash or burn:
-                            return cash, burn
-        return None, None
-    except Exception as e:
-        logger.error(f"{ticker}: Failed to extract cash/burn: {e}")
-        return None, None
+            months = 3 if filing_type == "10-Q" else 12
+            monthly_burn = (burn / months) if burn else None
+
+            logger.info(f"{ticker} cash: {cash}, monthly burn: {monthly_burn}")
+            return cash, monthly_burn
+
+        except Exception as e:
+            logger.error(f"{ticker}: Failed to extract cash/burn from {filing_type}: {e}")
+            continue
+
+    logger.error(f"{ticker}: Could not determine cash or burn from filings.")
+    return None, None
 
 def calculate_cash_runway(cash, burn):
     if cash is None or burn is None or burn == 0:
         return None
-    return cash / burn
+    return round(cash / burn, 1)
 
 # -------------------- Module 3: ATM Offering Capacity --------------------
 def get_atm_offering(cik):
@@ -539,25 +549,26 @@ def estimate_offering_ability(cik):
 
 
 #-------------MODULE 9: CALCULATIONG DILUTION PRESSURE SCORE ------------
-# ------------- Module 9: Primary Cash/Burn Scraper ----------------
+
 def get_cash_and_burn(cik):
+    """Extract cash and monthly burn rate from filings using web-based scraping."""
     try:
         docs = get_filing_urls(cik, form_types=["10-Q", "10-K"])
         for doc in docs:
             text = extract_text_from_filing(doc["url"])
 
             cash_patterns = [
-                r"cash and cash equivalents[^$\d]{0,20}\$?([\d,]+\.?\d*)",
-                r"we had approximately[^$\d]{0,20}\$?([\d,]+\.?\d*)\s+in cash",
-                r"as of .*? we had cash.*?\$?([\d,]+\.?\d*)",
-                r"total cash[^$\d]{0,20}\$?([\d,]+\.?\d*)",
+                r"cash and cash equivalents(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
+                r"we had approximately\s+\$?([\d,]+\.?\d*)\s+in cash",
+                r"as of .*? we had cash.*? \$?([\d,]+\.?\d*)",
+                r"total cash(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
             ]
 
             burn_patterns = [
-                r"monthly burn rate[^$\d]{0,20}\$?([\d,]+\.?\d*)",
-                r"we are burning approximately[^$\d]{0,20}\$?([\d,]+\.?\d*)\s+per month",
-                r"average monthly cash use[^$\d]{0,20}\$?([\d,]+\.?\d*)",
-                r"monthly cash burn[^$\d]{0,20}\$?([\d,]+\.?\d*)",
+                r"monthly burn rate(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
+                r"we are burning approximately\s+\$?([\d,]+\.?\d*)\s+per month",
+                r"average monthly cash use(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
+                r"monthly cash burn(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
             ]
 
             def search_patterns(patterns):
@@ -574,7 +585,8 @@ def get_cash_and_burn(cik):
                 return cash, burn
 
     except Exception as e:
-        logger.error(f"{cik}: Failed to extract cash/burn: {e}")
+        print(f"Error extracting cash/burn: {e}")
+
     return None, None
 
 def get_atm_capacity_score(atm_capacity_usd, market_cap):
@@ -716,7 +728,7 @@ if ticker:
 
         # If not found, try structured data parser (from Module 2)
         if not cash or not burn:
-            cash, burn = get_cash_and_burn_from_dl(ticker)
+            cash, burn = get_cash_and_burn_from_dl(ticker, dl)
 
         runway = calculate_cash_runway(cash, burn)
 
