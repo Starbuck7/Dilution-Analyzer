@@ -76,23 +76,30 @@ def _parse_market_cap_str(market_cap_str):
 
 # -------------------- Module 2: Cash Runway --------------------
 def get_cash_and_burn_from_dl(ticker):
+    base_dir = "sec-edgar-filings"  # or whatever you passed to Downloader()
     for filing_type in ["10-Q", "10-K"]:
         try:
-            dl.get(filing_type, ticker)  # ✅ Removed 'amount=1'
-            filing_dir = dl.get_filing_directory(filing_type, ticker)
-            latest_file = next((f for f in os.listdir(filing_dir) if f.endswith(".txt") or f.endswith(".htm")), None)
-            if not latest_file:
+            dl.get(filing_type, ticker)
+
+            # Build path manually
+            filing_path = os.path.join(base_dir, ticker, filing_type)
+            if not os.path.exists(filing_path):
                 continue
 
-            filepath = os.path.join(filing_dir, latest_file)
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                text = f.read().lower()
+            # Find latest .txt or .htm file
+            for root, dirs, files in os.walk(filing_path):
+                for file in files:
+                    if file.endswith(".txt") or file.endswith(".htm"):
+                        filepath = os.path.join(root, file)
+                        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                            text = f.read().lower()
 
-            cash = extract_cash(text)
-            burn = extract_burn_rate(text)
+                        cash = extract_cash(text)
+                        burn = extract_burn_rate(text)
 
-            if cash is not None or burn is not None:
-                return cash, burn
+                        if cash is not None or burn is not None:
+                            return cash, burn
+                        break  # Done once we process the first one
 
         except Exception as e:
             logger.error(f"{ticker}: Failed to extract cash/burn: {e}")
@@ -100,7 +107,6 @@ def get_cash_and_burn_from_dl(ticker):
 
     logger.error(f"{ticker}: Could not determine cash or burn from filings.")
     return None, None
-
 
 def parse_dollar_amount(text):
     match = re.search(r'\$?\(?([\d,.]+)\)?', text)
