@@ -571,9 +571,9 @@ def get_cash_and_burn(cik):
 
             if cash or burn:
                 return cash, burn
-        except Exception as e:
-            logger.error(f"{cik} - Error extracting cash/burn: {e}")
-        return None, None
+    except Exception as e:
+        logger.error(f"{cik} - Error extracting cash/burn: {e}")
+    return None, None
    
 def calculate_dilution_pressure_score(
     atm_capacity_usd,
