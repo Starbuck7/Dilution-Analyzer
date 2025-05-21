@@ -76,88 +76,63 @@ def _parse_market_cap_str(market_cap_str):
 
 # -------------------- Module 2: Cash Runway --------------------
 # -------------------- Module 2: Cash Runway (SEC Downloader based) --------------------
-dl.get("10-Q", ticker)
-dl.get("10-K", ticker)
-
-def parse_dollar_amount(text):
-    match = re.search(r'\$?\(?([\d,.]+)\)?', text)
-    if match:
-        amount = match.group(1).replace(",", "")
-        return float(amount)
-    return None
-
-def extract_cash(text):
-    patterns = [
-        r'cash and cash equivalents(?: at end of period)?\s*\$?\(?([\d,\.]+)\)?',
-        r'cash\s+and\s+short-term\s+investments\s*\$?\(?([\d,\.]+)\)?',
-        r'cash\s*\$?\(?([\d,\.]+)\)?'
+# -------------------- Module 2: Cash Runway --------------------
+def extract_cash_and_burn_from_filing_text(text, form_type):
+    text = text.lower()
+    
+    cash_patterns = [
+        r'cash and cash equivalents[^$\d]{0,40}\$?\(?([\d,.]+)\)?',
+        r'total cash[^$\d]{0,40}\$?\(?([\d,.]+)\)?',
     ]
-    for pat in patterns:
-        match = re.search(pat, text, re.IGNORECASE)
-        if match:
-            return parse_dollar_amount(match.group(0))
-    return None
-
-def extract_burn_rate(text):
-    patterns = [
-        r'net cash used in operating activities\s*\$?\(?([\d,\.]+)\)?',
-        r'net\s+cash\s+provided\s+by\s+operating\s+activities\s*\(used\)\s*\$?\(?([\d,\.]+)\)?'
+    burn_patterns = [
+        r'net cash used in operating activities[^$\d]{0,40}\$?\(?([\d,.]+)\)?',
+        r'net cash provided by operating activities[^$\d]{0,40}\$?\(?-([\d,.]+)\)?',
     ]
-    for pat in patterns:
-        match = re.search(pat, text, re.IGNORECASE)
-        if match:
-            return parse_dollar_amount(match.group(0))
-    return None
 
-def get_cash_and_burn_from_dl(ticker, dl):
-    """Extract cash and burn from local SEC filings downloaded using Downloader."""
+    def search_value(patterns):
+        for pat in patterns:
+            match = re.search(pat, text, re.IGNORECASE)
+            if match:
+                return float(match.group(1).replace(",", ""))
+        return None
+
+    cash = search_value(cash_patterns)
+    burn = search_value(burn_patterns)
+    monthly_burn = (burn / 3) if burn and form_type == "10-Q" else (burn / 12 if burn else None)
+    return cash, monthly_burn
+
+def get_cash_and_burn_from_dl(ticker):
     try:
-        base_path = dl.save_location  # typically "./sec-edgar-filings"
-
         for form_type in ["10-Q", "10-K"]:
-            form_path = os.path.join(base_path, ticker, form_type)
-            if not os.path.exists(form_path):
+            dl.get(form_type, ticker)
+            form_dir = os.path.join(dl.save_location, ticker.upper(), form_type)
+            if not os.path.exists(form_dir):
                 continue
 
             subdirs = sorted(
-                [os.path.join(form_path, d) for d in os.listdir(form_path)],
+                [os.path.join(form_dir, d) for d in os.listdir(form_dir)],
                 key=os.path.getmtime,
                 reverse=True
             )
             for subdir in subdirs:
-                try:
-                    # Find the main filing .txt or .html file
-                    filenames = [f for f in os.listdir(subdir) if f.endswith((".txt", ".htm", ".html"))]
-                    if not filenames:
-                        continue
-
-                    filepath = os.path.join(subdir, filenames[0])
-                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                        text = f.read().lower()
-
-                    cash = extract_cash(text)
-                    burn = extract_burn_rate(text)
-
-                    months = 3 if form_type == "10-Q" else 12
-                    monthly_burn = (burn / months) if burn else None
-
-                    logger.info(f"{ticker} cash: {cash}, monthly burn: {monthly_burn}")
-                    return cash, monthly_burn
-
-                except Exception as e:
-                    logger.error(f"{ticker}: Failed to parse filing in {subdir}: {e}")
+                files = [f for f in os.listdir(subdir) if f.endswith((".htm", ".html", ".txt"))]
+                if not files:
                     continue
-
+                with open(os.path.join(subdir, files[0]), "r", encoding="utf-8", errors="ignore") as f:
+                    text = f.read()
+                cash, burn = extract_cash_and_burn_from_filing_text(text, form_type)
+                if cash or burn:
+                    logger.info(f"{ticker} - cash: {cash}, burn: {burn}")
+                    return cash, burn
     except Exception as e:
-        logger.error(f"{ticker}: Failed to extract cash/burn from filings: {e}")
-
-    logger.error(f"{ticker}: Could not determine cash or burn from filings.")
+        logger.error(f"{ticker} - Error in get_cash_and_burn_from_dl: {e}")
     return None, None
 
 def calculate_cash_runway(cash, burn):
-    if cash is None or burn is None or burn == 0:
+    if cash is None or burn is None or burn <= 0:
         return None
     return round(cash / burn, 1)
+
 
 # -------------------- Module 3: ATM Offering Capacity --------------------
 def get_atm_offering(cik):
@@ -584,66 +559,22 @@ def get_cash_and_burn(cik):
                 r"monthly cash burn(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
             ]
 
-            def search_patterns(patterns):
-                for pattern in patterns:
-                    match = re.search(pattern, text, re.IGNORECASE)
-                    if match:
-                        return float(match.group(1).replace(",", ""))
+            def search_pattern(pats):
+                for pat in pats:
+                    m = re.search(pat, text, re.IGNORECASE)
+                    if m:
+                        return float(m.group(1).replace(",", ""))
                 return None
 
             cash = search_patterns(cash_patterns)
             burn = search_patterns(burn_patterns)
 
-            if cash is not None or burn is not None:
+            if cash or burn:
                 return cash, burn
-
-    except Exception as e:
-        print(f"Error extracting cash/burn: {e}")
-
-    return None, None
-
-def get_atm_capacity_score(atm_capacity_usd, market_cap):
-    if not market_cap or not atm_capacity_usd:
-        return 10  # neutral if missing
-
-    ratio = atm_capacity_usd / market_cap
-    if ratio > 0.75:
-        return 20
-    elif ratio > 0.5:
-        return 15
-    elif ratio > 0.25:
-        return 10
-    elif ratio > 0.1:
-        return 5
-    else:
-        return 0
-
-def get_convertibles_score(convertibles_usd, market_cap):
-    if not market_cap or not convertibles_usd:
-        return 5  # neutral
-
-    ratio = convertible_total_usd / market_cap
-    if ratio > 0.5:
-        return 15
-    elif ratio > 0.3:
-        return 10
-    elif ratio > 0.15:
-        return 5
-    else:
-        return 0
-
-def get_capital_raises_score(num_raises_past_year):
-    if num_raises_past_year >= 4:
-        return 15
-    elif num_raises_past_year == 3:
-        return 10
-    elif num_raises_past_year == 2:
-        return 7
-    elif num_raises_past_year == 1:
-        return 4
-    else:
-        return 0
-
+        except Exception as e:
+            logger.error(f"{cik} - Error extracting cash/burn: {e}")
+        return None, None
+   
 def calculate_dilution_pressure_score(
     atm_capacity_usd,
     authorized_shares,
@@ -655,45 +586,24 @@ def calculate_dilution_pressure_score(
 ):
     score = 0
 
-    # ATM Offering Capacity Scoring
+    # ATM vs Market Cap
     if atm_capacity_usd and market_cap:
-        ratio = atm_capacity_usd / market_cap
-        if ratio > 0.75:
-            score += 25
-        elif ratio > 0.5:
-            score += 20
-        elif ratio > 0.25:
-            score += 15
-        elif ratio > 0.1:
-            score += 10
-        else:
-            score += 5
+        atm_ratio = atm_capacity_usd / market_cap
+        score += 25 if atm_ratio > 0.75 else 20 if atm_ratio > 0.5 else 15 if atm_ratio > 0.25 else 10 if atm_ratio > 0.1 else 5
 
-    # Authorized - Outstanding (Dilution Potential)
+    # Authorized vs Outstanding
     if authorized_shares and outstanding_shares and market_cap:
         available = authorized_shares - outstanding_shares
-        est_value = available * 0.5  # Assuming $0.50 per share
-        dilution_ratio = est_value / market_cap
-        if dilution_ratio > 1:
-            score += 25
-        elif dilution_ratio > 0.5:
-            score += 20
-        elif dilution_ratio > 0.25:
-            score += 10
-        else:
-            score += 5
+        dilution_value = available * 0.5  # assume $0.50/share
+        dilution_ratio = dilution_value / market_cap
+        score += 25 if dilution_ratio > 1 else 20 if dilution_ratio > 0.5 else 10 if dilution_ratio > 0.25 else 5
 
-    # Convertibles & Warrants
+    # Convertibles
     if convertibles_usd and market_cap:
         convert_ratio = convertibles_usd / market_cap
-        if convert_ratio > 0.5:
-            score += 20
-        elif convert_ratio > 0.25:
-            score += 10
-        elif convert_ratio > 0.1:
-            score += 5
+        score += 20 if convert_ratio > 0.5 else 10 if convert_ratio > 0.25 else 5
 
-    # Capital Raises in Past Year
+    # Past Raises
     if capital_raises_past_year >= 4:
         score += 15
     elif capital_raises_past_year == 3:
@@ -705,14 +615,10 @@ def calculate_dilution_pressure_score(
 
     # Cash Runway
     if cash_runway is not None:
-        if cash_runway < 3:
-            score += 15
-        elif cash_runway < 6:
-            score += 10
-        elif cash_runway < 12:
-            score += 5
+        score += 15 if cash_runway < 3 else 10 if cash_runway < 6 else 5
 
-    return min(score, 100)
+    return min(score, 100) 
+
 
 
 
@@ -736,13 +642,12 @@ if ticker:
         st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
 
         # Cash Runway
-        # Try natural language parser first (from Module 9)
-        cash, burn = get_cash_and_burn(cik)
-
-        # If not found, try structured data parser (from Module 2)
+        cash, burn = get_cash_and_burn(cik)  # NLP fallback
         if not cash or not burn:
-            cash, burn = get_cash_and_burn_from_dl(ticker, dl)
-            runway = calculate_cash_runway(cash, burn)
+            cash, burn = get_cash_and_burn_from_dl(ticker)
+
+        runway = calculate_cash_runway(cash, burn)
+
 
         # Display
         st.subheader("2. Cash Runway")
@@ -798,7 +703,7 @@ if ticker:
 
         # Gathering all values for Dilution Score
         available_dilution_shares = (authorized - outstanding) if authorized and outstanding else 0
-        convertible_total_usd = sum(instruments.values()) if isinstance(instruments, dict) else 0
+        convertible_total_usd = 0  # You can enhance this later if you extract $ values from instruments
         num_raises_past_year = len([
             entry for entry in raises
             if datetime.strptime(entry["date"], "%Y-%m-%d") > datetime.now() - timedelta(days=365)
