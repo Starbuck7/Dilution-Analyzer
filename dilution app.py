@@ -645,7 +645,7 @@ if ticker:
         # Cash Runway
         cash, burn = get_cash_and_burn(cik)  # NLP fallback
         if not cash or not burn:
-            cash, burn = get_cash_and_burn_from_dl(ticker)
+            cash, burn = get_cash_and_burn_from_dl(ticker, dl)
         runway = calculate_cash_runway(cash, burn)
 
 
