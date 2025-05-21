@@ -10,7 +10,7 @@ from bs4 import XMLParsedAsHTMLWarning
 from datetime import datetime, timedelta
 from yahoo_fin import stock_info as si
 from sec_edgar_downloader import Downloader
-dl = Downloader(email_address="ashleymcgavern@yahoo.com", company_name="Dilution Analyzer")
+dl = Downloader(save_directory="./sec-edgar-filings", email_address="ashleymcgavern@yahoo.com", company_name="Dilution Analyzer")
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -77,36 +77,49 @@ def _parse_market_cap_str(market_cap_str):
 # -------------------- Module 2: Cash Runway --------------------
 
 def get_cash_and_burn_from_dl(ticker, downloader):
+    """Extract cash and burn from locally downloaded SEC filings using Downloader."""
     try:
-        from pathlib import Path
+        base_path = os.path.join(downloader.save_directory, ticker.upper())  # Use configured save path
 
-        # Use standard SEC-EDGAR-Downloader path structure
-        base_dir = Path(downloader._save_directory)
-        for form in ["10-Q", "10-K"]:
-            form_path = base_dir / ticker.upper() / form
-            if not form_path.exists():
+        for form_type in ["10-Q", "10-K"]:
+            form_path = os.path.join(base_path, form_type)
+            if not os.path.exists(form_path):
                 continue
 
-            latest_filing = sorted(form_path.glob("**/*.txt"), key=os.path.getmtime, reverse=True)
-            if not latest_filing:
-                continue
+            subdirs = sorted(
+                [os.path.join(form_path, d) for d in os.listdir(form_path)],
+                key=os.path.getmtime,
+                reverse=True
+            )
+            for subdir in subdirs:
+                try:
+                    filenames = [f for f in os.listdir(subdir) if f.endswith((".txt", ".htm", ".html"))]
+                    if not filenames:
+                        continue
 
-            with open(latest_filing[0], "r", encoding="utf-8", errors="ignore") as f:
-                text = f.read().lower()
+                    filepath = os.path.join(subdir, filenames[0])
+                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                        text = f.read().lower()
 
-            cash = extract_cash(text)
-            burn = extract_burn_rate(text)
+                    cash = extract_cash(text)
+                    burn = extract_burn_rate(text)
 
-            months = 3 if form == "10-Q" else 12
-            monthly_burn = burn / months if burn else None
+                    months = 3 if form_type == "10-Q" else 12
+                    monthly_burn = (burn / months) if burn else None
 
-            if cash or monthly_burn:
-                return cash, monthly_burn
+                    logger.info(f"{ticker} cash: {cash}, monthly burn: {monthly_burn}")
+                    return cash, monthly_burn
+
+                except Exception as e:
+                    logger.error(f"{ticker}: Failed to parse filing in {subdir}: {e}")
+                    continue
 
     except Exception as e:
         logger.error(f"{ticker} - Error in get_cash_and_burn_from_dl: {e}")
 
+    logger.error(f"{ticker}: Could not determine cash or burn from filings.")
     return None, None
+
 
 
 def extract_cash(text):
