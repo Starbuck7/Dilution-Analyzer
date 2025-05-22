@@ -134,44 +134,50 @@ def get_cash_and_burn_nlp(cik):
     return None, None
 
 def get_cash_and_burn_from_dl(ticker, downloader):
-    """Backup method: parse text from downloaded 10-Q/10-K to extract cash/burn."""
+    """
+    Extract cash and burn from local SEC filings downloaded using sec_edgar_downloader,
+    assuming default save path: ./sec-edgar-filings/
+    """
     try:
+        base_path = os.path.join("sec-edgar-filings", ticker.upper())  # don't rely on private attribute
+
         for form_type in ["10-Q", "10-K"]:
-            base_path = os.path.join(downloader._save_directory, ticker, form_type)
-            if not os.path.exists(base_path):
+            form_path = os.path.join(base_path, form_type)
+            if not os.path.exists(form_path):
                 continue
 
             subdirs = sorted(
-                [os.path.join(base_path, d) for d in os.listdir(base_path)],
+                [os.path.join(form_path, d) for d in os.listdir(form_path)],
                 key=os.path.getmtime,
                 reverse=True
             )
 
             for subdir in subdirs:
                 try:
-                    files = [f for f in os.listdir(subdir) if f.endswith((".txt", ".html", ".htm"))]
+                    files = [f for f in os.listdir(subdir) if f.endswith((".txt", ".htm", ".html"))]
                     if not files:
                         continue
-
-                    with open(os.path.join(subdir, files[0]), "r", encoding="utf-8", errors="ignore") as f:
+                    filepath = os.path.join(subdir, files[0])
+                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
                         text = f.read().lower()
 
-                    # Cash extraction
-                    cash_match = re.search(r'cash and cash equivalents(?:[^$\d]{0,20})\$?([\d,]+)', text)
-                    cash = float(cash_match.group(1).replace(",", "")) if cash_match else None
-
-                    # Burn: total used in ops, divided by 3 (quarterly) or 12 (annual)
-                    burn_match = re.search(r'net cash used in operating activities[^$\d]{0,20}\(?\$?([\d,]+)', text)
-                    burn = float(burn_match.group(1).replace(",", "")) if burn_match else None
+                    cash = extract_cash(text)
+                    burn = extract_burn_rate(text)
 
                     months = 3 if form_type == "10-Q" else 12
                     monthly_burn = (burn / months) if burn else None
-                    return cash, monthly_burn
 
+                    if cash and monthly_burn:
+                        logger.info(f"{ticker} cash: {cash}, monthly burn: {monthly_burn}")
+                        return cash, monthly_burn
                 except Exception as e:
-                    logger.error(f"{ticker} - Error in get_cash_and_burn_from_dl: {e}")
+                    logger.error(f"{ticker} - Error parsing {subdir}: {e}")
+                    continue
+
     except Exception as e:
         logger.error(f"{ticker} - Error in get_cash_and_burn_from_dl: {e}")
+
+    logger.error(f"{ticker} - Could not extract cash/burn from filings.")
     return None, None
 
 def calculate_cash_runway(cash, burn):
