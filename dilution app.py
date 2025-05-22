@@ -116,7 +116,7 @@ def get_cash_and_burn_from_filing(cik):
             text = BeautifulSoup(res.text, "lxml").get_text().replace(",", "")
 
             cash = extract_cash(text)
-            burn = extract_burn(text)
+            burn = extract_burn_rate(text)
             if cash and burn:
                 logger.info(f"{cik} cash: {cash}, burn: {burn}")
                 return cash, round(burn / 3 if form == "10-Q" else burn / 12, 2)
