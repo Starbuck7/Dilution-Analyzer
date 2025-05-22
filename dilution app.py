@@ -87,17 +87,13 @@ def extract_cash(text):
             return float(match.group(1).replace(",", ""))
     return None
 
-def extract_burn(text):
-    patterns = [
-        r'net cash used in operating activities.*?\$?\(?([\d,]+(?:\.\d{1,2})?)\)?',
-        r'net cash provided by operating activities.*?\(used\).*?\$?\(?([\d,]+(?:\.\d{1,2})?)\)?',
-        r'cash used in operations.*?\$?\(?([\d,]+(?:\.\d{1,2})?)\)?',
-        r'operating activities.*?used.*?\$?\(?([\d,]+(?:\.\d{1,2})?)\)?',
-    ]
-    for pat in patterns:
-        match = re.search(pat, text, re.IGNORECASE | re.DOTALL)
-        if match:
-            return abs(float(match.group(1).replace(",", "")))
+def extract_burn_rate(text):
+    # Extracts quarterly burn (net cash used in operating activities), then converts to monthly
+    match = re.search(r'net cash used in operating activities\s*\$?\(?([\d,\.]+)\)?', text, re.IGNORECASE)
+    if match:
+        burn = float(match.group(1).replace(",", ""))
+        monthly_burn = round(burn / 3, 2)
+        return monthly_burn
     return None
 
 def get_cash_and_burn_from_filing(cik):
