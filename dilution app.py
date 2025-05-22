@@ -117,12 +117,10 @@ def get_cash_and_burn_nlp(cik):
         logger.error(f"{cik} - Error extracting cash/burn: {e}")
     return None, None
 
-def get_cash_and_burn_from_dl(ticker, downloader):
-    """
-    Extract cash and monthly burn rate from SEC filings downloaded via sec_edgar_downloader.
-    """
+def get_cash_and_burn_dl(ticker, downloader):
+    """Extract cash and burn from local SEC filings downloaded using Downloader."""
     try:
-        base_path = os.path.join("sec-edgar-filings", ticker.upper())  # Default path used by Downloader
+        base_path = os.path.join("sec-edgar-filings", ticker.upper())
 
         for form_type in ["10-Q", "10-K"]:
             form_path = os.path.join(base_path, form_type)
@@ -134,57 +132,33 @@ def get_cash_and_burn_from_dl(ticker, downloader):
                 key=os.path.getmtime,
                 reverse=True
             )
-
             for subdir in subdirs:
                 try:
-                    filenames = [f for f in os.listdir(subdir) if f.endswith((".txt", ".htm", ".html"))]
-                    if not filenames:
+                    files = [f for f in os.listdir(subdir) if f.endswith((".txt", ".htm", ".html"))]
+                    if not files:
                         continue
 
-                    filepath = os.path.join(subdir, filenames[0])
+                    filepath = os.path.join(subdir, files[0])
                     with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
                         text = f.read().lower()
 
-                    # Cash patterns
-                    cash_patterns = [
-                        r'cash and cash equivalents(?: at end of period)?\s*\$?\(?([\d,\.]+)\)?',
-                        r'cash\s+and\s+short-term\s+investments\s*\$?\(?([\d,\.]+)\)?',
-                        r'cash\s*\$?\(?([\d,\.]+)\)?'
-                    ]
-
-                    # Burn patterns
-                    burn_patterns = [
-                        r'net cash used in operating activities\s*\$?\(?([\d,\.]+)\)?',
-                        r'net\s+cash\s+provided\s+by\s+operating\s+activities\s*\(used\)\s*\$?\(?([\d,\.]+)\)?'
-                    ]
-
-                    def extract_value(patterns):
-                        for pat in patterns:
-                            match = re.search(pat, text)
-                            if match:
-                                value = float(match.group(1).replace(",", ""))
-                                return value
-                        return None
-
-                    cash = extract_value(cash_patterns)
-                    burn = extract_value(burn_patterns)
+                    cash = extract_cash(text)
+                    burn = extract_burn_rate(text)
 
                     months = 3 if form_type == "10-Q" else 12
-                    monthly_burn = (burn / months) if burn else None
+                    monthly_burn = burn / months if burn else None
 
                     logger.info(f"{ticker} cash: {cash}, monthly burn: {monthly_burn}")
                     return cash, monthly_burn
 
                 except Exception as e:
-                    logger.error(f"{ticker}: Failed to parse filing in {subdir}: {e}")
+                    logger.error(f"{ticker}: Failed to parse {form_type} filing in {subdir}: {e}")
                     continue
 
     except Exception as e:
-        logger.error(f"{ticker} - Error in get_cash_and_burn_from_dl: {e}")
+        logger.error(f"{ticker} - Error in get_cash_and_burn_dl: {e}")
 
-    logger.error(f"{ticker}: Could not determine cash or burn from filings.")
     return None, None
-
 
 def calculate_cash_runway(cash, burn):
     if cash is None or burn is None or burn == 0:
