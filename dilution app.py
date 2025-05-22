@@ -75,6 +75,28 @@ def _parse_market_cap_str(market_cap_str):
         return None
 
 # -------------------- Module 2: Cash Runway --------------------
+def get_filing_urls(cik, form_types=["10-Q", "10-K"], count=5):
+    url = f"https://data.sec.gov/submissions/CIK{str(cik).zfill(10)}.json"
+    headers = {"User-Agent": "Dilution Analyzer (ashleymcgavern@yahoo.com)"}
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        filings = data.get("filings", {}).get("recent", {})
+        urls = []
+
+        for i in range(min(count, len(filings["form"]))):
+            if filings["form"][i] in form_types:
+                accession = filings["accessionNumber"][i].replace("-", "")
+                doc = filings["primaryDocument"][i]
+                filing_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
+                urls.append({"form": filings["form"][i], "url": filing_url})
+
+        return urls
+    except Exception as e:
+        logger.error(f"{cik} - Error fetching filing URLs: {e}")
+        return []
+
 def get_cash_and_burn_nlp(cik):
     """Extract cash and burn rate using regex patterns from recent filings (natural language)."""
     try:
@@ -671,7 +693,7 @@ if ticker:
         # Module 2: Cash Runway
         cash, burn = get_cash_and_burn_nlp(cik)
         if not cash or not burn:
-            cash, burn = get_cash_and_burn_from_dl(ticker, downloader)
+            cash, burn = get_cash_and_burn_from_dl(ticker, dl)
 
         runway = calculate_cash_runway(cash, burn)
         st.subheader("2. Cash Runway")
