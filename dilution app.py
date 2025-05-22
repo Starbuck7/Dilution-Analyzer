@@ -75,7 +75,6 @@ def _parse_market_cap_str(market_cap_str):
         return None
 
 # -------------------- Module 2: Cash Runway --------------------
-# -------------------- Module 2: Cash Runway --------------------
 def get_cash_and_burn_nlp(cik):
     """Extract cash and burn rate using regex patterns from recent filings (natural language)."""
     try:
@@ -672,7 +671,7 @@ if ticker:
         # Module 2: Cash Runway
         cash, burn = get_cash_and_burn_nlp(cik)
         if not cash or not burn:
-            cash, burn = get_cash_and_burn_dl(ticker, downloader)
+            cash, burn = get_cash_and_burn_from_dl(ticker, downloader)
 
         runway = calculate_cash_runway(cash, burn)
         st.subheader("2. Cash Runway")
