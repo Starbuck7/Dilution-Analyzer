@@ -10,7 +10,7 @@ from bs4 import XMLParsedAsHTMLWarning
 from datetime import datetime, timedelta
 from yahoo_fin import stock_info as si
 from sec_edgar_downloader import Downloader
-dl = Downloader(save_directory="./sec-edgar-filings", email_address="ashleymcgavern@yahoo.com", company_name="Dilution Analyzer")
+dl = Downloader(email_address="ashleymcgavern@yahoo.com", company_name="Dilution Analyzer")
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
