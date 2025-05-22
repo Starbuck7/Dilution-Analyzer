@@ -117,32 +117,74 @@ def get_cash_and_burn_nlp(cik):
         logger.error(f"{cik} - Error extracting cash/burn: {e}")
     return None, None
 
-def get_cash_and_burn_dl(ticker, downloader):
+def get_cash_and_burn_from_dl(ticker, downloader):
+    """
+    Extract cash and monthly burn rate from SEC filings downloaded via sec_edgar_downloader.
+    """
     try:
-        base_path = downloader._save_directory  # _save_directory is the correct internal var
-        for form in ["10-Q", "10-K"]:
-            path = os.path.join(base_path, ticker, form)
-            if not os.path.exists(path):
+        base_path = os.path.join("sec-edgar-filings", ticker.upper())  # Default path used by Downloader
+
+        for form_type in ["10-Q", "10-K"]:
+            form_path = os.path.join(base_path, form_type)
+            if not os.path.exists(form_path):
                 continue
+
             subdirs = sorted(
-                [os.path.join(path, d) for d in os.listdir(path)],
+                [os.path.join(form_path, d) for d in os.listdir(form_path)],
                 key=os.path.getmtime,
                 reverse=True
             )
+
             for subdir in subdirs:
-                for fname in os.listdir(subdir):
-                    if fname.endswith(".txt") or fname.endswith(".htm"):
-                        with open(os.path.join(subdir, fname), "r", encoding="utf-8", errors="ignore") as f:
-                            text = f.read().lower()
-                        cash_match = re.search(r'cash and cash equivalents[^$\d]{0,20}\$?([\d,]+\.?\d*)', text)
-                        burn_match = re.search(r'net cash used in operating activities[^$\d]{0,20}\$?([\d,]+\.?\d*)', text)
-                        cash = float(cash_match.group(1).replace(",", "")) if cash_match else None
-                        burn = float(burn_match.group(1).replace(",", "")) if burn_match else None
-                        monthly_burn = burn / 3 if burn and form == "10-Q" else burn / 12 if burn else None
-                        return cash, monthly_burn
+                try:
+                    filenames = [f for f in os.listdir(subdir) if f.endswith((".txt", ".htm", ".html"))]
+                    if not filenames:
+                        continue
+
+                    filepath = os.path.join(subdir, filenames[0])
+                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                        text = f.read().lower()
+
+                    # Cash patterns
+                    cash_patterns = [
+                        r'cash and cash equivalents(?: at end of period)?\s*\$?\(?([\d,\.]+)\)?',
+                        r'cash\s+and\s+short-term\s+investments\s*\$?\(?([\d,\.]+)\)?',
+                        r'cash\s*\$?\(?([\d,\.]+)\)?'
+                    ]
+
+                    # Burn patterns
+                    burn_patterns = [
+                        r'net cash used in operating activities\s*\$?\(?([\d,\.]+)\)?',
+                        r'net\s+cash\s+provided\s+by\s+operating\s+activities\s*\(used\)\s*\$?\(?([\d,\.]+)\)?'
+                    ]
+
+                    def extract_value(patterns):
+                        for pat in patterns:
+                            match = re.search(pat, text)
+                            if match:
+                                value = float(match.group(1).replace(",", ""))
+                                return value
+                        return None
+
+                    cash = extract_value(cash_patterns)
+                    burn = extract_value(burn_patterns)
+
+                    months = 3 if form_type == "10-Q" else 12
+                    monthly_burn = (burn / months) if burn else None
+
+                    logger.info(f"{ticker} cash: {cash}, monthly burn: {monthly_burn}")
+                    return cash, monthly_burn
+
+                except Exception as e:
+                    logger.error(f"{ticker}: Failed to parse filing in {subdir}: {e}")
+                    continue
+
     except Exception as e:
         logger.error(f"{ticker} - Error in get_cash_and_burn_from_dl: {e}")
+
+    logger.error(f"{ticker}: Could not determine cash or burn from filings.")
     return None, None
+
 
 def calculate_cash_runway(cash, burn):
     if cash is None or burn is None or burn == 0:
