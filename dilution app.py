@@ -672,7 +672,7 @@ if ticker:
         # Module 2: Cash Runway
         cash, burn = get_cash_and_burn_nlp(cik)
         if not cash or not burn:
-            cash, burn = get_cash_and_burn_dl(ticker, dl)
+            cash, burn = get_cash_and_burn_dl(ticker, downloader)
 
         runway = calculate_cash_runway(cash, burn)
         st.subheader("2. Cash Runway")
