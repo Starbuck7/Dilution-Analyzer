@@ -77,22 +77,25 @@ def _parse_market_cap_str(market_cap_str):
 # -------------------- Module 2: Cash Runway --------------------
 def extract_cash(text):
     patterns = [
-        r'cash and cash equivalents(?: at end of period)?[^$\d]{0,10}\$?([\d,]+(?:\.\d{1,2})?)',
-        r'total cash[^$\d]{0,10}\$?([\d,]+(?:\.\d{1,2})?)',
+        r'cash and cash equivalents.*?\$?\(?([\d,]+(?:\.\d{1,2})?)\)?',
+        r'as of [^,\n]+, we had cash.*?\$?\(?([\d,]+(?:\.\d{1,2})?)\)?',
+        r'we had approximately\s+\$?([\d,]+(?:\.\d{1,2})?)\s+in cash',
     ]
     for pat in patterns:
-        match = re.search(pat, text, re.IGNORECASE)
+        match = re.search(pat, text, re.IGNORECASE | re.DOTALL)
         if match:
             return float(match.group(1).replace(",", ""))
     return None
 
 def extract_burn(text):
     patterns = [
-        r'net cash used in operating activities[^$\d]{0,10}\$?([\d,]+(?:\.\d{1,2})?)',
-        r'net cash provided by operating activities\s*\(used\)[^$\d]{0,10}\$?([\d,]+(?:\.\d{1,2})?)',
+        r'net cash used in operating activities.*?\$?\(?([\d,]+(?:\.\d{1,2})?)\)?',
+        r'net cash provided by operating activities.*?\(used\).*?\$?\(?([\d,]+(?:\.\d{1,2})?)\)?',
+        r'cash used in operations.*?\$?\(?([\d,]+(?:\.\d{1,2})?)\)?',
+        r'operating activities.*?used.*?\$?\(?([\d,]+(?:\.\d{1,2})?)\)?',
     ]
     for pat in patterns:
-        match = re.search(pat, text, re.IGNORECASE)
+        match = re.search(pat, text, re.IGNORECASE | re.DOTALL)
         if match:
             return abs(float(match.group(1).replace(",", "")))
     return None
