@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # -------------------- Config --------------------
-USER_AGENT = {"User-Agent": "Ashley (ashleymcgavern@yahoo.com)"}
+USER_AGENT = {"User-Agent": "DilutionAnalyzerBot/1.0"}
 
 # -------------------- Utility Functions --------------------
 def get_cik_from_ticker(ticker):
@@ -75,118 +75,60 @@ def _parse_market_cap_str(market_cap_str):
         return None
 
 # -------------------- Module 2: Cash Runway --------------------
-def get_filing_urls(cik, form_types=["10-Q", "10-K"], count=5):
-    url = f"https://data.sec.gov/submissions/CIK{str(cik).zfill(10)}.json"
-    headers = {"User-Agent": "Dilution Analyzer (ashleymcgavern@yahoo.com)"}
+def extract_cash(text):
+    patterns = [
+        r'cash and cash equivalents(?: at end of period)?[^$\d]{0,10}\$?([\d,]+(?:\.\d{1,2})?)',
+        r'total cash[^$\d]{0,10}\$?([\d,]+(?:\.\d{1,2})?)',
+    ]
+    for pat in patterns:
+        match = re.search(pat, text, re.IGNORECASE)
+        if match:
+            return float(match.group(1).replace(",", ""))
+    return None
+
+def extract_burn(text):
+    patterns = [
+        r'net cash used in operating activities[^$\d]{0,10}\$?([\d,]+(?:\.\d{1,2})?)',
+        r'net cash provided by operating activities\s*\(used\)[^$\d]{0,10}\$?([\d,]+(?:\.\d{1,2})?)',
+    ]
+    for pat in patterns:
+        match = re.search(pat, text, re.IGNORECASE)
+        if match:
+            return abs(float(match.group(1).replace(",", "")))
+    return None
+
+def get_cash_and_burn_from_filing(cik):
     try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        filings = data.get("filings", {}).get("recent", {})
-        urls = []
+        url = f"https://data.sec.gov/submissions/CIK{cik.zfill(10)}.json"
+        headers = USER_AGENT
+        filings_json = requests.get(url, headers=headers).json()
+        recent = filings_json.get("filings", {}).get("recent", {})
+        forms = recent.get("form", [])
+        accessions = recent.get("accessionNumber", [])
+        docs = recent.get("primaryDocument", [])
 
-        for i in range(min(count, len(filings["form"]))):
-            if filings["form"][i] in form_types:
-                accession = filings["accessionNumber"][i].replace("-", "")
-                doc = filings["primaryDocument"][i]
-                filing_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-                urls.append({"form": filings["form"][i], "url": filing_url})
+        for i, form in enumerate(forms):
+            if form not in ["10-Q", "10-K"]:
+                continue
+            accession = accessions[i].replace("-", "")
+            doc = docs[i]
+            filing_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
+            res = requests.get(filing_url, headers=headers)
+            text = BeautifulSoup(res.text, "lxml").get_text().replace(",", "")
 
-        return urls
-    except Exception as e:
-        logger.error(f"{cik} - Error fetching filing URLs: {e}")
-        return []
-
-def get_cash_and_burn_nlp(cik):
-    """Extract cash and burn rate using regex patterns from recent filings (natural language)."""
-    try:
-        docs = get_filing_urls(cik, form_types=["10-Q", "10-K"])
-        for doc in docs:
-            text = extract_text_from_filing(doc["url"])
-
-            cash_patterns = [
-                r"cash and cash equivalents(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
-                r"we had approximately\s+\$?([\d,]+\.?\d*)\s+in cash",
-                r"as of .*? we had cash.*? \$?([\d,]+\.?\d*)",
-                r"total cash(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
-            ]
-
-            burn_patterns = [
-                r"monthly burn rate(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
-                r"we are burning approximately\s+\$?([\d,]+\.?\d*)\s+per month",
-                r"average monthly cash use(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
-                r"monthly cash burn(?:[^$\d]{0,20})\s+\$?([\d,]+\.?\d*)",
-            ]
-
-            def search(patterns):
-                for p in patterns:
-                    match = re.search(p, text, re.IGNORECASE)
-                    if match:
-                        return float(match.group(1).replace(",", ""))
-                return None
-
-            cash = search(cash_patterns)
-            burn = search(burn_patterns)
-            if cash or burn:
-                return cash, burn
+            cash = extract_cash(text)
+            burn = extract_burn(text)
+            if cash and burn:
+                logger.info(f"{cik} cash: {cash}, burn: {burn}")
+                return cash, round(burn / 3 if form == "10-Q" else burn / 12, 2)
     except Exception as e:
         logger.error(f"{cik} - Error extracting cash/burn: {e}")
     return None, None
 
-def get_cash_and_burn_from_dl(ticker, downloader):
-    """More robust cash + burn extractor using cash flow sections from 10-Q/10-K."""
-    try:
-        base_path = os.path.join(os.getcwd(), "sec-edgar-filings")
-        for form in ["10-Q", "10-K"]:
-            form_path = os.path.join(base_path, ticker, form)
-            if not os.path.exists(form_path):
-                continue
-
-            subdirs = sorted(
-                [os.path.join(form_path, d) for d in os.listdir(form_path)],
-                key=os.path.getmtime,
-                reverse=True
-            )
-            for subdir in subdirs:
-                files = [f for f in os.listdir(subdir) if f.endswith((".txt", ".htm", ".html"))]
-                if not files:
-                    continue
-                filepath = os.path.join(subdir, files[0])
-                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                    text = f.read().lower()
-
-                # Extract cash from balance sheet section
-                cash_match = re.search(
-                    r"cash\s+and\s+cash\s+equivalents[^$\d]{0,20}\$?\(?([\d,]+\.?\d*)\)?", text)
-                if cash_match:
-                    cash = float(cash_match.group(1).replace(",", "").replace(")", ""))
-                else:
-                    cash = None
-
-                # Extract net cash used in ops from cash flow
-                burn_match = re.search(
-                    r"net\s+cash\s+used\s+in\s+operating\s+activities[^$\d]{0,20}\$?\(?([\d,]+\.?\d*)\)?", text)
-                if burn_match:
-                    burn_total = float(burn_match.group(1).replace(",", "").replace(")", ""))
-                    months = 3 if form == "10-Q" else 12
-                    burn = burn_total / months
-                else:
-                    burn = None
-
-                if cash is not None or burn is not None:
-                    logger.info(f"{ticker}: extracted cash ${cash}, monthly burn ${burn}")
-                    return cash, burn
-
-    except Exception as e:
-        logger.error(f"{ticker} - Error in get_cash_and_burn_from_dl: {e}")
-
-    logger.error(f"{ticker} - Could not extract cash/burn from filings.")
-    return None, None
-
 def calculate_cash_runway(cash, burn):
-    if not cash or not burn or burn <= 0:
-        return None
-    return round(cash / burn, 1)
+    if cash and burn and burn > 0:
+        return round(cash / burn, 1)
+    return None
 
 
 # -------------------- Module 3: ATM Offering Capacity --------------------
@@ -700,10 +642,7 @@ if ticker:
         st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
 
         # Module 2: Cash Runway
-        cash, burn = get_cash_and_burn_nlp(cik)
-        if not cash or not burn:
-            cash, burn = get_cash_and_burn_from_dl(ticker, dl)
-
+        cash, burn = get_cash_and_burn_from_filing(cik)
         runway = calculate_cash_runway(cash, burn)
         st.subheader("2. Cash Runway")
         if cash:
