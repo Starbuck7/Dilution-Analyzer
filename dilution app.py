@@ -134,15 +134,11 @@ def get_cash_and_burn_nlp(cik):
     return None, None
 
 def get_cash_and_burn_from_dl(ticker, downloader):
-    """
-    Extract cash and burn from local SEC filings downloaded using sec_edgar_downloader,
-    assuming default save path: ./sec-edgar-filings/
-    """
+    """More robust cash + burn extractor using cash flow sections from 10-Q/10-K."""
     try:
-        base_path = os.path.join("sec-edgar-filings", ticker.upper())  # don't rely on private attribute
-
-        for form_type in ["10-Q", "10-K"]:
-            form_path = os.path.join(base_path, form_type)
+        base_path = os.path.join(os.getcwd(), "sec-edgar-filings")
+        for form in ["10-Q", "10-K"]:
+            form_path = os.path.join(base_path, ticker, form)
             if not os.path.exists(form_path):
                 continue
 
@@ -151,28 +147,35 @@ def get_cash_and_burn_from_dl(ticker, downloader):
                 key=os.path.getmtime,
                 reverse=True
             )
-
             for subdir in subdirs:
-                try:
-                    files = [f for f in os.listdir(subdir) if f.endswith((".txt", ".htm", ".html"))]
-                    if not files:
-                        continue
-                    filepath = os.path.join(subdir, files[0])
-                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                        text = f.read().lower()
-
-                    cash = extract_cash(text)
-                    burn = extract_burn_rate(text)
-
-                    months = 3 if form_type == "10-Q" else 12
-                    monthly_burn = (burn / months) if burn else None
-
-                    if cash and monthly_burn:
-                        logger.info(f"{ticker} cash: {cash}, monthly burn: {monthly_burn}")
-                        return cash, monthly_burn
-                except Exception as e:
-                    logger.error(f"{ticker} - Error parsing {subdir}: {e}")
+                files = [f for f in os.listdir(subdir) if f.endswith((".txt", ".htm", ".html"))]
+                if not files:
                     continue
+                filepath = os.path.join(subdir, files[0])
+                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                    text = f.read().lower()
+
+                # Extract cash from balance sheet section
+                cash_match = re.search(
+                    r"cash\s+and\s+cash\s+equivalents[^$\d]{0,20}\$?\(?([\d,]+\.?\d*)\)?", text)
+                if cash_match:
+                    cash = float(cash_match.group(1).replace(",", "").replace(")", ""))
+                else:
+                    cash = None
+
+                # Extract net cash used in ops from cash flow
+                burn_match = re.search(
+                    r"net\s+cash\s+used\s+in\s+operating\s+activities[^$\d]{0,20}\$?\(?([\d,]+\.?\d*)\)?", text)
+                if burn_match:
+                    burn_total = float(burn_match.group(1).replace(",", "").replace(")", ""))
+                    months = 3 if form == "10-Q" else 12
+                    burn = burn_total / months
+                else:
+                    burn = None
+
+                if cash is not None or burn is not None:
+                    logger.info(f"{ticker}: extracted cash ${cash}, monthly burn ${burn}")
+                    return cash, burn
 
     except Exception as e:
         logger.error(f"{ticker} - Error in get_cash_and_burn_from_dl: {e}")
