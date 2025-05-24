@@ -685,7 +685,7 @@ if ticker:
         if not cash or not burn:
             cash, burn = get_cash_and_burn_dl(ticker, dl)
         runway = calculate_cash_runway(cash, burn)
-        
+
         st.subheader("2. Cash Runway")
         if cash:
             st.write(f"Cash: ${cash:,.0f}")
