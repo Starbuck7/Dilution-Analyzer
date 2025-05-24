@@ -154,47 +154,64 @@ def calculate_cash_runway(cash, burn):
 
 
 # -------------------- Module 3: ATM Offering Capacity --------------------
-def get_atm_offering(cik):
+def get_atm_offering(cik, lookback=10):
     try:
-        url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-        res = requests.get(url, headers=USER_AGENT)
-        if res.status_code != 200:
-            return None, None
+        cik_str = str(cik).zfill(10)
+        base_url = f"https://data.sec.gov/submissions/CIK{cik_str}.json"
+        headers = {"User-Agent": "Ashley (ashleymcgavern@yahoo.com)"}
 
+        # Get recent filings metadata
+        res = requests.get(base_url, headers=headers)
+        if res.status_code != 200:
+            raise Exception(f"Failed to fetch submissions for CIK {cik_str}")
         filings = res.json().get("filings", {}).get("recent", {})
+
         forms = filings.get("form", [])
         accessions = filings.get("accessionNumber", [])
         docs = filings.get("primaryDocument", [])
+        urls = []
 
         for i, form in enumerate(forms):
-            if form not in ["S-3", "S-1", "8-K"]:
-                continue
-            if i >= len(accessions) or i >= len(docs):
-                continue
+            if form in ["S-1", "S-3", "8-K", "424B5"] and i < lookback:
+                accession = accessions[i].replace("-", "")
+                doc = docs[i]
+                url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
+                urls.append((form, url))
 
-            accession = accessions[i].replace("-", "")
-            doc = docs[i]
-            filing_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-            html = requests.get(filing_url, headers=USER_AGENT).text
+        total_atm_usd = None
+        sold_usd = 0
+
+        for form, url in urls:
+            html = requests.get(url, headers=headers).text
             text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
 
-            atm_patterns = [
-                r"(?i)at-the-market\s+offering\s+.*?\$([0-9]{2,})",
-                r"(?i)offering\s+under\s+the\s+atm\s+program.*?\$([0-9]{2,})",
-                r"(?i)may\s+sell\s+up\s+to\s+\$([0-9]{2,})\s+.*?(?:shares|stock|securities)?",
-                r"(?i)maximum\s+aggregate\s+offering\s+price[^0-9]{0,20}\$([0-9]{2,})"
-            ]
-
-            for pattern in atm_patterns:
-                match = re.search(pattern, text)
+            if form in ["S-1", "S-3"]:
+                match = re.search(r"(?:at[-\s]the[-\s]market|ATM)[^$]{0,40}\$([\d\.]+)\s*(million|billion)?", text, re.IGNORECASE)
                 if match:
-                    atm_amount = int(match.group(1))
-                    return atm_amount, filing_url
-        return None, None
-    except Exception as e:
-        print(f"Error in get_atm_offering: {e}")
-        return None, None
+                    val = float(match.group(1))
+                    unit = match.group(2)
+                    if unit:
+                        val *= 1_000_000 if unit.lower() == "million" else 1_000_000_000
+                    total_atm_usd = val
 
+            elif form in ["8-K", "424B5"]:
+                sold_matches = re.findall(r"under\s+the\s+ATM[^$]{0,100}\$([\d\.]+)\s*(million|billion)?", text, re.IGNORECASE)
+                for match in sold_matches:
+                    val = float(match[0])
+                    unit = match[1]
+                    if unit:
+                        val *= 1_000_000 if unit.lower() == "million" else 1_000_000_000
+                    sold_usd += val
+
+        if total_atm_usd is not None:
+            remaining = max(total_atm_usd - sold_usd, 0)
+            return remaining, url  # return the most recent ATM-related URL
+        else:
+            return None, None
+
+    except Exception as e:
+        logger.error(f"Error in get_atm_offering: {e}")
+        return None, None
 
 # -------------------- Module 4: Authorized vs Outstanding Shares & Float --------------------
 def get_authorized_shares(cik):
@@ -681,7 +698,7 @@ if ticker:
 
 
         # ATM Offering
-        atm, atm_url = get_atm_offering(cik)
+        atm, atm_url = get_atm_offering(cik, lookback=10)
         st.subheader("3. ATM Offering Capacity")
         if atm:
             st.write(f"${atm:,.0f}")
