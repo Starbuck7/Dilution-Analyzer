@@ -114,38 +114,37 @@ def extract_cash_position(text):
 
 def get_cash_and_burn_dl(ticker, downloader):
     try:
-        base = os.path.join(".", "sec-edgar-filings", ticker)
+        base_path = downloader._Downloader__save_directory  # for newer versions
+
         for form_type in ["10-Q", "10-K"]:
-            path = os.path.join(base, form_type)
-            if not os.path.exists(path):
+            form_path = os.path.join(base_path, ticker, form_type)
+            if not os.path.exists(form_path):
                 continue
 
             subdirs = sorted(
-                [os.path.join(path, d) for d in os.listdir(path)],
+                [os.path.join(form_path, d) for d in os.listdir(form_path)],
                 key=os.path.getmtime, reverse=True
             )
-
             for subdir in subdirs:
                 files = [f for f in os.listdir(subdir) if f.endswith((".txt", ".htm", ".html"))]
                 if not files:
                     continue
-
                 with open(os.path.join(subdir, files[0]), "r", encoding="utf-8", errors="ignore") as f:
                     text = f.read().lower()
 
-                cash = extract_cash_position(text)
-                burn_total, period_months = extract_operating_cash_flow(text)
+                cash = extract_cash(text)
+                burn = extract_burn_rate(text)
+                months = 3 if form_type == "10-Q" else 12
+                monthly_burn = (burn / months) if burn else None
 
-                if burn_total and period_months:
-                    monthly_burn = burn_total / period_months
-                    logger.info(f"{ticker} Cash: {cash}, Total Burn: {burn_total}, Period: {period_months}, Monthly Burn: {monthly_burn}")
+                if cash and monthly_burn:
+                    logger.info(f"{ticker}: Cash: {cash}, Burn: {monthly_burn}")
                     return cash, monthly_burn
-
     except Exception as e:
         logger.error(f"{ticker} - Error in get_cash_and_burn_from_dl: {e}")
-
     logger.error(f"{ticker} - Could not extract cash/burn from filings.")
     return None, None
+
 
 def calculate_cash_runway(cash, burn):
     if cash is None or burn is None or burn == 0:
