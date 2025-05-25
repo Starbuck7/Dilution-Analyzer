@@ -474,7 +474,7 @@ def get_public_float(cik):
 def get_shelf_registered_shares(cik, num_filings=10):
     try:
         cik_str = str(cik).zfill(10)
-        dl = Downloader("/tmp/sec")
+        local_dl = Downloader(email_address="ashleymcgavern@yahoo.com", company_name="Dilution Analyzer")
         
         # Download recent S-3, S-1, and 424B3 filings
         filing_types = ['S-3', 'S-1', '424B3']
