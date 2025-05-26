@@ -14,6 +14,7 @@ dl = Downloader(email_address="ashleymcgavern@yahoo.com", company_name="Dilution
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+print("DIR:", os.listdir(os.path.join(os.getcwd(), "sec-edgar-filings")))
 
 # -------------------- Config --------------------
 USER_AGENT = {"User-Agent": "DilutionAnalyzerBot/1.0"}
@@ -108,8 +109,7 @@ def extract_operating_cash_flow(text):
 def extract_cash_position(text):
     pattern = r'cash and cash equivalents(?:[^$\d]{0,40})\$?([\d,\.]+)'
     match = re.search(pattern, text, re.IGNORECASE)
-    print(f"Extracted Cash Position: {cash}")
-
+   
     if match:
         return parse_dollar_amount(match.group(1))
     return None
@@ -138,8 +138,7 @@ def get_cash_and_burn_dl(ticker, downloader):
                 cash = extract_cash_position(text)
                 burn_raw, months = extract_operating_cash_flow(text)
                 monthly_burn = burn_raw / months if burn_raw and months else None
-                print(f"Extracted Burn Rate: {burn_raw}, Months: {months}")
-
+                
                 if cash and monthly_burn:
                     logger.info(f"{ticker}: Cash: {cash}, Burn: {monthly_burn}")
                     return cash, monthly_burn
