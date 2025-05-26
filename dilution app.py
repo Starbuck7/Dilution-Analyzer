@@ -181,7 +181,7 @@ def get_cash_and_burn_dl(ticker, downloader):
 
     except Exception as e:
         logger.error(f"{ticker} - Error in get_cash_and_burn_dl: {e}")
-        return None, None
+        return 0, 0  # ✅ Prevents unpacking errors
 
 def calculate_cash_runway(cash, burn):
     """Calculates how many months of runway a company has left."""
@@ -721,7 +721,7 @@ if ticker:
         st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
 
         # Module 2: Cash Runway
-        cash, burn = get_cash_and_burn_dl(ticker, dl)
+        cash, burn = get_cash_and_burn_dl(ticker, dl) or (0, 0)  # ✅ Guarantees valid values
         runway = calculate_cash_runway(cash, burn)
 
         st.subheader("2. Cash Runway")
