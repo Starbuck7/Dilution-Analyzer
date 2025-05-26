@@ -125,7 +125,7 @@ def parse_dollar_amount(text):
 
 def extract_operating_cash_flow(text):
     """Extracts burn rate with more robust regex and better context detection."""
-    pattern = r'net cash used in operating activities[^$\d]{0,50}\$?([\d,\.]+)'
+    pattern = r'net cash used in operating activities[^$\d]{0,80}\$?([\d,\.]+)'  # ✅ Expand search scope
     matches = list(re.finditer(pattern, text, re.IGNORECASE | re.DOTALL))
 
     for match in matches:
@@ -145,7 +145,7 @@ def extract_operating_cash_flow(text):
 
 def extract_cash_position(text):
     """Extracts cash balance with improved regex scope."""
-    pattern = r'cash and cash equivalents(?:[^$\d]{0,40})\$?([\d,\.]+)'
+    pattern = r'cash and cash equivalents(?:[^$\d]{0,60})\$?([\d,\.]+)'
     match = re.search(pattern, text, re.IGNORECASE)
    
     if match:
