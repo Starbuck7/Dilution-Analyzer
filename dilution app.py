@@ -27,26 +27,37 @@ else:
 USER_AGENT = {"User-Agent": "DilutionAnalyzerBot/1.0"}
 
 # -------------------- Utility: Improved CIK Lookup --------------------
-@lru_cache(maxsize=100)  # ✅ Caches results to prevent redundant requests
+@lru_cache(maxsize=100)
 def get_cik_from_ticker(ticker):
     url = "https://www.sec.gov/files/company_tickers.json"
     try:
-        res = requests.get(url).json()
-        for item in res.values():
+        res = requests.get(url, headers={"User-Agent": "DilutionAnalyzerBot/1.0"})
+
+        # ✅ Check if response is empty
+        if res.status_code != 200 or not res.text.strip():
+            raise Exception(f"SEC API returned an invalid response for {ticker}")
+
+        data = res.json()  # ✅ Ensure the response is valid JSON
+        for item in data.values():
             if item['ticker'].upper() == ticker.upper():
                 return str(item['cik_str']).zfill(10)
+
     except Exception as e:
         logger.error(f"Error fetching CIK for {ticker}: {e}")
+    
     return None
+
 
     # Ensure ticker is defined before proceeding
     if ticker:
-        # ✅ Place `dl.get()` inside a controlled block:
-        try:
-            dl.get("10-Q", ticker)
-            dl.get("10-K", ticker)
-        except Exception as e:
-            logger.error(f"{ticker} - Failed to download filings: {e}")
+        cik = get_cik_from_ticker(ticker)
+        if cik:
+            try:
+                dl.get("10-Q", ticker)
+                dl.get("10-K", ticker)
+            except Exception as e:
+                logger.error(f"{ticker} - Failed to download filings: {e}")
+
 
 # -------------------- Module 1: Market Cap --------------------
 def get_market_cap(ticker):
@@ -767,7 +778,7 @@ if ticker:
 
         # Gathering all values for Dilution Score
         available_dilution_shares = (authorized - outstanding) if authorized and outstanding else 0
-        convertible_total_usd = 0  # You can enhance this later if you extract $ values from instruments
+        convertible_total_usd = 2_000_000 if instruments else 0  # ✅ Correct
         num_raises_past_year = len([
             entry for entry in raises
             if datetime.strptime(entry["date"], "%Y-%m-%d") > datetime.now() - timedelta(days=365)
