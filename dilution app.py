@@ -15,12 +15,18 @@ dl = Downloader(email_address="ashleymcgavern@yahoo.com", company_name="Dilution
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-print("DIR:", os.listdir(os.path.join(os.getcwd(), "sec-edgar-filings")))
 try:
     dl.get("10-Q", ticker)
     dl.get("10-K", ticker)
 except Exception as e:
     logger.error(f"{ticker} - Failed to download filings: {e}")  # ✅ Logger now exists
+    
+dir_path = os.path.join(os.getcwd(), "sec-edgar-filings")
+if not os.path.exists(dir_path):
+    logger.warning(f"Directory not found: {dir_path}. Ensure filings have been downloaded.")
+else:
+    print("DIR:", os.listdir(dir_path))
+
 
 # -------------------- Config --------------------
 USER_AGENT = {"User-Agent": "DilutionAnalyzerBot/1.0"}
