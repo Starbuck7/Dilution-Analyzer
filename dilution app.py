@@ -15,12 +15,13 @@ dl = Downloader(email_address="ashleymcgavern@yahoo.com", company_name="Dilution
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)  
+
 dir_path = os.path.join(os.getcwd(), "sec-edgar-filings")
 if not os.path.exists(dir_path):
-    logger.warning(f"Directory not found: {dir_path}. Ensure filings have been downloaded.")
+    os.makedirs(dir_path)  # ✅ Create directory if missing
+    logger.warning(f"Directory {dir_path} was missing and has been created.")
 else:
     print("DIR:", os.listdir(dir_path))
-
 
 # -------------------- Config --------------------
 USER_AGENT = {"User-Agent": "DilutionAnalyzerBot/1.0"}
@@ -38,17 +39,8 @@ def get_cik_from_ticker(ticker):
         logger.error(f"Error fetching CIK for {ticker}: {e}")
     return None
 
-# Streamlit Ticker Input
-ticker = st.text_input("Enter a stock ticker (e.g., SYTA)", "").strip().upper()
-
-# Ensure ticker is defined before proceeding
-if ticker:
-    cik = get_cik_from_ticker(ticker)
-    if not cik:
-        st.error("CIK not found for this ticker.")
-    else:
-        st.success(f"CIK found: {cik}")
-
+    # Ensure ticker is defined before proceeding
+    if ticker:
         # ✅ Place `dl.get()` inside a controlled block:
         try:
             dl.get("10-Q", ticker)
@@ -786,7 +778,7 @@ if ticker:
 
       # Module 9: Calculate Dilution Pressure Score
 try:
-    convertible_total_usd = instruments if instruments else []  # list-based logic
+    convertible_total_usd = 2_000_000 if instruments else 0  # ✅ Placeholder estimate
     available_dilution_shares = (authorized - outstanding) if authorized and outstanding else 0
     num_raises_past_year = len([
         entry for entry in raises
