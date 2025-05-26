@@ -23,8 +23,12 @@ if not os.path.exists(dir_path):
 else:
     print("DIR:", os.listdir(dir_path))
 
+print("DIR CONTENTS:", os.listdir("/mount/src/dilution-analyzer/sec-edgar-filings"))
+
 # -------------------- Config --------------------
 USER_AGENT = {"User-Agent": "DilutionAnalyzerBot/1.0"}
+res = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
+print("SEC Status:", res.status_code)  # ✅ Should be 200
 
 # -------------------- Utility: Improved CIK Lookup --------------------
 @lru_cache(maxsize=100)
@@ -55,6 +59,7 @@ def get_cik_from_ticker(ticker):
             try:
                 dl.get("10-Q", ticker)
                 dl.get("10-K", ticker)
+                print("SEC Filings Downloaded!")
             except Exception as e:
                 logger.error(f"{ticker} - Failed to download filings: {e}")
 
