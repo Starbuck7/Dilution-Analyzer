@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from yahoo_fin import stock_info as si
 from sec_edgar_downloader import Downloader
 from functools import lru_cache
-dl = Downloader("ashleymcgavern@yahoo.com")
+dl = Downloader(email_address="ashleymcgavern@yahoo.com", company_name="Dilution Analyzer")
 try:
     dl.get("10-Q", ticker)
     dl.get("10-K", ticker)
