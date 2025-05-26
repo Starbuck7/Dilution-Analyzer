@@ -27,8 +27,16 @@ print("DIR CONTENTS:", os.listdir("/mount/src/dilution-analyzer/sec-edgar-filing
 
 # -------------------- Config --------------------
 USER_AGENT = {"User-Agent": "DilutionAnalyzerBot/1.0"}
-res = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
-print("SEC Status:", res.status_code)  # ✅ Should be 200
+print("Headers Sent:", USER_AGENT)
+
+res = requests.get("https://www.sec.gov/files/company_tickers.json", headers=USER_AGENT)
+
+if res.status_code != 200 or not res.text.strip():  # ✅ Ensures valid response
+    logger.error(f"SEC API returned an invalid response. Status code: {res.status_code}")
+else:
+    data = res.json()  # ✅ Prevents parsing errors
+    print("SEC Data Retrieved Successfully!")
+
 
 # -------------------- Utility: Improved CIK Lookup --------------------
 @lru_cache(maxsize=100)
