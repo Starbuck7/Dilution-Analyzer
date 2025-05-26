@@ -10,6 +10,7 @@ from bs4 import XMLParsedAsHTMLWarning
 from datetime import datetime, timedelta
 from yahoo_fin import stock_info as si
 from sec_edgar_downloader import Downloader
+from functools import lru_cache
 dl = Downloader(email_address="ashleymcgavern@yahoo.com", company_name="Dilution Analyzer")
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 logging.basicConfig(level=logging.INFO)
@@ -19,13 +20,17 @@ print("DIR:", os.listdir(os.path.join(os.getcwd(), "sec-edgar-filings")))
 # -------------------- Config --------------------
 USER_AGENT = {"User-Agent": "DilutionAnalyzerBot/1.0"}
 
-# -------------------- Utility Functions --------------------
+# -------------------- Utility: Improved CIK Lookup --------------------
+@lru_cache(maxsize=100)  # ✅ Caches results to prevent redundant requests
 def get_cik_from_ticker(ticker):
-    url = f"https://www.sec.gov/files/company_tickers.json"
-    res = requests.get(url, headers=USER_AGENT).json()
-    for item in res.values():
-        if item['ticker'].upper() == ticker.upper():
-            return str(item['cik_str']).zfill(10)
+    url = "https://www.sec.gov/files/company_tickers.json"
+    try:
+        res = requests.get(url).json()
+        for item in res.values():
+            if item['ticker'].upper() == ticker.upper():
+                return str(item['cik_str']).zfill(10)
+    except Exception as e:
+        logger.error(f"Error fetching CIK for {ticker}: {e}")
     return None
 
 # -------------------- Module 1: Market Cap --------------------
@@ -76,37 +81,40 @@ def _parse_market_cap_str(market_cap_str):
         return None
 
 # -------------------- Module 2: Cash Runway --------------------
+# -------------------- Module 2: Cash Runway --------------------
 def parse_dollar_amount(text):
+    """Extracts dollar amounts while handling variations in SEC formatting."""
     match = re.search(r'\$?\(?([\d,\.]+)\)?', text)
     if match:
         amount = match.group(1).replace(",", "")
         try:
             return float(amount)
-        except:
+        except ValueError:
             return None
     return None
 
 def extract_operating_cash_flow(text):
-    # Look for the full statement context to determine the period
-    pattern = r'net cash used in operating activities.*?\(?\$?([\d,\.]+)\)?'
+    """Extracts burn rate with more robust regex and better context detection."""
+    pattern = r'net cash used in operating activities[^$\d]{0,50}\$?([\d,\.]+)'
     matches = list(re.finditer(pattern, text, re.IGNORECASE | re.DOTALL))
 
     for match in matches:
         value_str = match.group(1)
         value = parse_dollar_amount(value_str)
 
-        # Check nearby text to detect period (e.g., "for the nine months ended")
+        # 🛠 Improved method to detect period more reliably
         window_start = max(0, match.start() - 300)
         window_text = text[window_start:match.start()].lower()
 
-        if "nine months" in window_text:
-            return value, 9
-        elif "three months" in window_text:
-            return value, 3
+        months_map = {"three": 3, "six": 6, "nine": 9, "twelve": 12}
+        for period in months_map:
+            if period in window_text:
+                return value, months_map[period]
 
-    return None, None
+    return None, None  # ✅ Returns None safely if extraction fails
 
 def extract_cash_position(text):
+    """Extracts cash balance with improved regex scope."""
     pattern = r'cash and cash equivalents(?:[^$\d]{0,40})\$?([\d,\.]+)'
     match = re.search(pattern, text, re.IGNORECASE)
    
@@ -115,10 +123,9 @@ def extract_cash_position(text):
     return None
 
 def get_cash_and_burn_dl(ticker, downloader):
+    """Extracts cash position and burn rate from SEC filings."""
     try:
-        # Dynamically determine save path regardless of Downloader internals
         base_path = os.path.join(os.getcwd(), "sec-edgar-filings")
-
         for form_type in ["10-Q", "10-K"]:
             form_path = os.path.join(base_path, ticker, form_type)
             if not os.path.exists(form_path):
@@ -138,20 +145,24 @@ def get_cash_and_burn_dl(ticker, downloader):
                 cash = extract_cash_position(text)
                 burn_raw, months = extract_operating_cash_flow(text)
                 monthly_burn = burn_raw / months if burn_raw and months else None
-                
-                if cash and monthly_burn:
-                    logger.info(f"{ticker}: Cash: {cash}, Burn: {monthly_burn}")
-                    return cash, monthly_burn
-    except Exception as e:
-        logger.error(f"{ticker} - Error in get_cash_and_burn_from_dl: {e}")
-    logger.error(f"{ticker} - Could not extract cash/burn from filings.")
-    return None, None
 
+                # 🛠 **Improved Error Handling** - Logs missing values
+                if cash is None or monthly_burn is None:
+                    logger.warning(f"{ticker} - Cash or Burn rate extraction failed.")
+                    return None, None
+
+                logger.info(f"{ticker}: Cash: {cash}, Burn: {monthly_burn}")
+                return cash, monthly_burn
+
+    except Exception as e:
+        logger.error(f"{ticker} - Error in get_cash_and_burn_dl: {e}")
+        return None, None
 
 def calculate_cash_runway(cash, burn):
+    """Calculates how many months of runway a company has left."""
     if cash is None or burn is None or burn == 0:
         return None
-    return round(cash / burn, 1)
+    return round(cash / burn, 1)  # ✅ Keeps precision while avoiding div-by-zero
 
 
 # -------------------- Module 3: ATM Offering Capacity --------------------
@@ -644,21 +655,24 @@ def get_cash_runway_score(runway_months):
         return 0
 
 def calculate_dilution_pressure_score(
-    atm_capacity_usd,
-    authorized_shares,
-    outstanding_shares,
-    convertibles,
-    capital_raises_past_year,
-    cash_runway,
-    market_cap
+    atm_capacity_usd, authorized_shares, outstanding_shares,
+    convertibles, capital_raises_past_year, cash_runway, market_cap
 ):
+    """Calculates a dilution risk score based on financial pressures."""
+    
+    def safe_value(value, default=0):
+        """Prevents crashes by handling missing values gracefully."""
+        return value if value is not None else default
+
+    # ✅ Ensures missing values won’t break calculations
     total_score = 0
-    total_score += get_atm_capacity_score(atm_capacity_usd, market_cap)
-    total_score += get_authorized_vs_outstanding_score(authorized_shares, outstanding_shares, market_cap)
-    total_score += get_convertibles_score(convertibles, market_cap)
-    total_score += get_capital_raises_score(capital_raises_past_year)
-    total_score += get_cash_runway_score(cash_runway)
-    return min(total_score, 100)
+    total_score += get_atm_capacity_score(safe_value(atm_capacity_usd), safe_value(market_cap))
+    total_score += get_authorized_vs_outstanding_score(safe_value(authorized_shares), safe_value(outstanding_shares), safe_value(market_cap))
+    total_score += get_convertibles_score(safe_value(convertibles), safe_value(market_cap))
+    total_score += get_capital_raises_score(safe_value(capital_raises_past_year))
+    total_score += get_cash_runway_score(safe_value(cash_runway))
+
+    return min(total_score, 100)  # ✅ Caps score at 100
 
 
    
