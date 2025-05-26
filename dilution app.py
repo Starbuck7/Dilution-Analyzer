@@ -14,13 +14,7 @@ from functools import lru_cache
 dl = Downloader(email_address="ashleymcgavern@yahoo.com", company_name="Dilution Analyzer")
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-try:
-    dl.get("10-Q", ticker)
-    dl.get("10-K", ticker)
-except Exception as e:
-    logger.error(f"{ticker} - Failed to download filings: {e}")  # ✅ Logger now exists
-    
+logger = logging.getLogger(__name__)  
 dir_path = os.path.join(os.getcwd(), "sec-edgar-filings")
 if not os.path.exists(dir_path):
     logger.warning(f"Directory not found: {dir_path}. Ensure filings have been downloaded.")
@@ -43,6 +37,24 @@ def get_cik_from_ticker(ticker):
     except Exception as e:
         logger.error(f"Error fetching CIK for {ticker}: {e}")
     return None
+
+# Streamlit Ticker Input
+ticker = st.text_input("Enter a stock ticker (e.g., SYTA)", "").strip().upper()
+
+# Ensure ticker is defined before proceeding
+if ticker:
+    cik = get_cik_from_ticker(ticker)
+    if not cik:
+        st.error("CIK not found for this ticker.")
+    else:
+        st.success(f"CIK found: {cik}")
+
+        # ✅ Place `dl.get()` inside a controlled block:
+        try:
+            dl.get("10-Q", ticker)
+            dl.get("10-K", ticker)
+        except Exception as e:
+            logger.error(f"{ticker} - Failed to download filings: {e}")
 
 # -------------------- Module 1: Market Cap --------------------
 def get_market_cap(ticker):
