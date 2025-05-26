@@ -108,6 +108,8 @@ def extract_operating_cash_flow(text):
 def extract_cash_position(text):
     pattern = r'cash and cash equivalents(?:[^$\d]{0,40})\$?([\d,\.]+)'
     match = re.search(pattern, text, re.IGNORECASE)
+    print(f"Extracted Cash Position: {cash}")
+
     if match:
         return parse_dollar_amount(match.group(1))
     return None
@@ -136,6 +138,7 @@ def get_cash_and_burn_dl(ticker, downloader):
                 cash = extract_cash_position(text)
                 burn_raw, months = extract_operating_cash_flow(text)
                 monthly_burn = burn_raw / months if burn_raw and months else None
+                print(f"Extracted Burn Rate: {burn_raw}, Months: {months}")
 
                 if cash and monthly_burn:
                     logger.info(f"{ticker}: Cash: {cash}, Burn: {monthly_burn}")
