@@ -114,7 +114,8 @@ def extract_cash_position(text):
 
 def get_cash_and_burn_dl(ticker, downloader):
     try:
-        base_path = downloader._Downloader__save_directory  # for newer versions
+        # Dynamically determine save path regardless of Downloader internals
+        base_path = os.path.join(os.getcwd(), "sec-edgar-filings")
 
         for form_type in ["10-Q", "10-K"]:
             form_path = os.path.join(base_path, ticker, form_type)
