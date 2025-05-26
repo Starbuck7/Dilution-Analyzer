@@ -132,10 +132,9 @@ def get_cash_and_burn_dl(ticker, downloader):
                 with open(os.path.join(subdir, files[0]), "r", encoding="utf-8", errors="ignore") as f:
                     text = f.read().lower()
 
-                cash = extract_cash(text)
-                burn = extract_burn_rate(text)
-                months = 3 if form_type == "10-Q" else 12
-                monthly_burn = (burn / months) if burn else None
+                cash = extract_cash_position(text)
+                burn_raw, months = extract_operating_cash_flow(text)
+                monthly_burn = burn_raw / months if burn_raw and months else None
 
                 if cash and monthly_burn:
                     logger.info(f"{ticker}: Cash: {cash}, Burn: {monthly_burn}")
