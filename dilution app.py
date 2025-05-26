@@ -12,16 +12,15 @@ from yahoo_fin import stock_info as si
 from sec_edgar_downloader import Downloader
 from functools import lru_cache
 dl = Downloader(email_address="ashleymcgavern@yahoo.com", company_name="Dilution Analyzer")
-try:
-    dl.get("10-Q", ticker)
-    dl.get("10-K", ticker)
-except Exception as e:
-    logger.error(f"{ticker} - Failed to download filings: {e}")
-
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 print("DIR:", os.listdir(os.path.join(os.getcwd(), "sec-edgar-filings")))
+try:
+    dl.get("10-Q", ticker)
+    dl.get("10-K", ticker)
+except Exception as e:
+    logger.error(f"{ticker} - Failed to download filings: {e}")  # ✅ Logger now exists
 
 # -------------------- Config --------------------
 USER_AGENT = {"User-Agent": "DilutionAnalyzerBot/1.0"}
