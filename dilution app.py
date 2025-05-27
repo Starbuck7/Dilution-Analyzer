@@ -681,10 +681,13 @@ if ticker:
         offering_data = estimate_offering_ability(cik)
         st.subheader("7. Offering Ability")
         for k, v in offering_data.items():
-             if isinstance(v, (int, float)) and v is not None:
-                 st.write(f"{k}: {v:,.0f}")
-        else:
-                 st.write(f"{k}: {v}")
+            try:
+                if v is not None and isinstance(v, (int, float)):
+                    st.write(f"{k}: {v:,.0f}")
+                else:
+                    st.write(f"{k}: {v}")
+            except Exception as ex:
+                st.write(f"{k}: [error displaying value] ({ex})")
 
         # Gathering all values for Dilution Score
         available_dilution_shares = (authorized - outstanding) if authorized and outstanding else 0
