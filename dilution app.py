@@ -112,8 +112,29 @@ def _parse_market_cap_str(market_cap_str):
         return None
 
 # -------------------- Module 2: Cash Runway --------------------
+# --- Module 2: Cash Runway (Optimized) ---
+def extract_cash_position(text):
+    pattern = r'cash and cash equivalents(?:[^$\d]{0,60})\$?([\d,\.]+)'
+    match = re.search(pattern, text, re.IGNORECASE)
+    if match:
+        return parse_dollar_amount(match.group(1))
+    return None
+
+def extract_operating_cash_flow(text):
+    pattern = r'net cash used in operating activities[^$\d]{0,80}\$?([\d,\.]+)'
+    matches = list(re.finditer(pattern, text, re.IGNORECASE | re.DOTALL))
+    for match in matches:
+        value_str = match.group(1)
+        value = parse_dollar_amount(value_str)
+        window_start = max(0, match.start() - 300)
+        window_text = text[window_start:match.start()].lower()
+        months_map = {"three": 3, "six": 6, "nine": 9, "twelve": 12}
+        for period in months_map:
+            if period in window_text:
+                return value, months_map[period]
+    return None, None
+
 def parse_dollar_amount(text):
-    """Extracts dollar amounts while handling variations in SEC formatting."""
     match = re.search(r'\$?\(?([\d,\.]+)\)?', text)
     if match:
         amount = match.group(1).replace(",", "")
@@ -123,80 +144,66 @@ def parse_dollar_amount(text):
             return None
     return None
 
-def extract_operating_cash_flow(text):
-    """Extracts burn rate with more robust regex and better context detection."""
-    pattern = r'net cash used in operating activities[^$\d]{0,80}\$?([\d,\.]+)'  # ✅ Expand search scope
-    matches = list(re.finditer(pattern, text, re.IGNORECASE | re.DOTALL))
+def download_and_get_latest_filing_text(cik, form_types=("10-Q", "10-K")):
+    """
+    Finds the most recent 10-Q or 10-K, downloads it if needed, and returns the filing text.
+    Returns (form_type, filing_text) or (None, None) on failure.
+    """
+    data = fetch_sec_json(cik)
+    if not data:
+        return None, None
 
-    for match in matches:
-        value_str = match.group(1)
-        value = parse_dollar_amount(value_str)
-
-        # 🛠 Improved method to detect period more reliably
-        window_start = max(0, match.start() - 300)
-        window_text = text[window_start:match.start()].lower()
-
-        months_map = {"three": 3, "six": 6, "nine": 9, "twelve": 12}
-        for period in months_map:
-            if period in window_text:
-                return value, months_map[period]
-
-    return None, None  # ✅ Returns None safely if extraction fails
-
-def extract_cash_position(text):
-    """Extracts cash balance with improved regex scope."""
-    pattern = r'cash and cash equivalents(?:[^$\d]{0,60})\$?([\d,\.]+)'
-    match = re.search(pattern, text, re.IGNORECASE)
-   
-    if match:
-        return parse_dollar_amount(match.group(1))
-    return None
-
-def get_cash_and_burn_dl(ticker, downloader):
-    """Extracts cash position and burn rate from SEC filings."""
-    try:
-        base_path = os.path.join(os.getcwd(), "sec-edgar-filings")
-        for form_type in ["10-Q", "10-K"]:
-            form_path = os.path.join(base_path, ticker, form_type)
-            if not os.path.exists(form_path):
+    filings = data.get("filings", {}).get("recent", {})
+    forms = filings.get("form", [])
+    accessions = filings.get("accessionNumber", [])
+    docs = filings.get("primaryDocument", [])
+    for i, form in enumerate(forms):
+        if form in form_types:
+            accession = accessions[i].replace("-", "")
+            doc = docs[i]
+            filing_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
+            try:
+                filing_text = requests.get(filing_url, headers=USER_AGENT).text
+                return form, filing_text
+            except Exception as e:
+                logger.error(f"Failed to fetch filing {filing_url}: {e}")
                 continue
+    return None, None
 
-            subdirs = sorted(
-                [os.path.join(form_path, d) for d in os.listdir(form_path)],
-                key=os.path.getmtime, reverse=True
-            )
-            for subdir in subdirs:
-                files = [f for f in os.listdir(subdir) if f.endswith((".txt", ".htm", ".html"))]
-                if not files:
-                    logger.warning(f"No SEC filing found in {subdir}")  # ✅ Improved debug statement
-                    continue
-                with open(os.path.join(subdir, files[0]), "r", encoding="utf-8", errors="ignore") as f:
-                    text = f.read().lower()
+def get_cash_and_burn_dl(ticker, cik=None):
+    """
+    Extracts cash position and burn rate from the most recent 10-Q or 10-K.
+    If cik is not provided, will attempt to look up from ticker.
+    """
+    try:
+        if cik is None:
+            cik = get_cik_from_ticker(ticker)
+        if not cik:
+            logger.error(f"CIK not found for ticker {ticker}")
+            return None, None
 
-                cash = extract_cash_position(text)
-                burn_raw, months = extract_operating_cash_flow(text)
-                monthly_burn = burn_raw / months if burn_raw and months else None
+        form, filing_text = download_and_get_latest_filing_text(cik)
+        if not filing_text:
+            logger.warning(f"No recent 10-Q or 10-K found for {ticker}")
+            return None, None
 
-                # 🛠 **Improved Error Handling** - Logs missing values
-                if cash is None or monthly_burn is None:
-                    logger.warning(f"{ticker} - Cash or Burn rate extraction failed.")
-                    return None, None
+        text = filing_text.lower()
+        cash = extract_cash_position(text)
+        burn_raw, months = extract_operating_cash_flow(text)
+        monthly_burn = burn_raw / months if burn_raw and months else None
 
-                logger.info(f"{ticker}: Cash: {cash}, Burn: {monthly_burn}")
-                return cash, monthly_burn
+        if cash is None or monthly_burn is None:
+            logger.warning(f"{ticker} - Cash or Burn rate extraction failed.")
+            return None, None
+
+        logger.info(f"{ticker}: Cash: {cash}, Burn: {monthly_burn}")
+        return cash, monthly_burn
 
     except Exception as e:
         logger.error(f"{ticker} - Error in get_cash_and_burn_dl: {e}")
-        return 0, 0  # ✅ Prevents unpacking errors
+        return 0, 0
 
-def calculate_cash_runway(cash, burn):
-    """Calculates how many months of runway a company has left."""
-    if cash is None or burn is None or burn == 0:
-        return None
-    return round(cash / burn, 1)  # ✅ Keeps precision while avoiding div-by-zero
-
-
-# -------------------- Module 3: ATM Offering Capacity --------------------
+# --- Module 3: ATM Offering Capacity ---
 def get_atm_offering(cik, lookback=10):
     try:
         data = fetch_sec_json(cik, headers={"User-Agent": "Ashley (ashleymcgavern@yahoo.com)"})
@@ -247,6 +254,7 @@ def get_atm_offering(cik, lookback=10):
     except Exception as e:
         logger.error(f"Error in get_atm_offering: {e}")
         return None, None
+
 
 # -------------------- Module 4: Authorized vs Outstanding Shares & Float --------------------
 def get_authorized_shares(cik):
@@ -621,8 +629,7 @@ if ticker:
 
         # Module 2: Cash Runway
         cash, burn = get_cash_and_burn_dl(ticker, dl) or (0, 0)  # ✅ Guarantees valid values
-        runway = calculate_cash_runway(cash, burn)
-
+        runway = round(cash / burn, 1) if cash and burn else None
         st.subheader("2. Cash Runway")
         if cash:
             st.write(f"Cash: ${cash:,.0f}")
