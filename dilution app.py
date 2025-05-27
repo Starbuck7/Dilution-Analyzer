@@ -41,23 +41,26 @@ else:
 # -------------------- Utility: Improved CIK Lookup --------------------
 @lru_cache(maxsize=100)
 def get_cik_from_ticker(ticker):
+    """Fetch CIK from SEC API with retry mechanism."""
     url = "https://www.sec.gov/files/company_tickers.json"
-    try:
-        res = requests.get(url, headers={"User-Agent": "DilutionAnalyzerBot/1.0"})
+    headers = {"User-Agent": "DilutionAnalyzerBot/1.0"}
 
-        # ✅ Check if response is empty
-        if res.status_code != 200 or not res.text.strip():
-            raise Exception(f"SEC API returned an invalid response for {ticker}")
+    for attempt in range(3):  # ✅ Retries up to 3 times
+        try:
+            res = requests.get(url, headers=headers)
+            if res.status_code == 200 and res.text.strip():
+                data = res.json()
+                for item in data.values():
+                    if item['ticker'].upper() == ticker.upper():
+                        return str(item['cik_str']).zfill(10)
+            logger.warning(f"Attempt {attempt + 1}: SEC API returned status {res.status_code}")
+        except Exception as e:
+            logger.error(f"Error fetching CIK for {ticker}: {e}")
 
-        data = res.json()  # ✅ Ensure the response is valid JSON
-        for item in data.values():
-            if item['ticker'].upper() == ticker.upper():
-                return str(item['cik_str']).zfill(10)
+        time.sleep(2)  # ✅ Wait before retrying
 
-    except Exception as e:
-        logger.error(f"Error fetching CIK for {ticker}: {e}")
-    
-    return None
+    return None  # ✅ Returns None instead of crashing
+
 
 
     # Ensure ticker is defined before proceeding
@@ -176,6 +179,7 @@ def get_cash_and_burn_dl(ticker, downloader):
             for subdir in subdirs:
                 files = [f for f in os.listdir(subdir) if f.endswith((".txt", ".htm", ".html"))]
                 if not files:
+                    logger.warning(f"No SEC filing found in {subdir}")  # ✅ Improved debug statement
                     continue
                 with open(os.path.join(subdir, files[0]), "r", encoding="utf-8", errors="ignore") as f:
                     text = f.read().lower()
