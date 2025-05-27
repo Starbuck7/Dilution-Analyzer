@@ -13,6 +13,14 @@ from yahoo_fin import stock_info as si
 from sec_edgar_downloader import Downloader
 from functools import lru_cache
  
+dir_path = os.path.join(os.getcwd(), "sec-edgar-filings")
+if not os.path.exists(dir_path):
+    os.makedirs(dir_path)  # ✅ Create directory if missing
+    logger.warning(f"Directory {dir_path} was missing and has been created.")
+else:
+    print("DIR:", os.listdir(dir_path))
+
+print("DIR CONTENTS:", os.listdir("/mount/src/dilution-analyzer/sec-edgar-filings"))
 
 # -------------------- Config --------------------
 USER_AGENT = {"User-Agent": "DilutionAnalyzerBot/1.0"}
