@@ -12,23 +12,18 @@ from datetime import datetime, timedelta
 from yahoo_fin import stock_info as si
 from sec_edgar_downloader import Downloader
 from functools import lru_cache
-dl = Downloader(email_address="ashleymcgavern@yahoo.com", company_name="Dilution Analyzer")
-warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)  
-
-dir_path = os.path.join(os.getcwd(), "sec-edgar-filings")
-if not os.path.exists(dir_path):
-    os.makedirs(dir_path)  # ✅ Create directory if missing
-    logger.warning(f"Directory {dir_path} was missing and has been created.")
-else:
-    print("DIR:", os.listdir(dir_path))
-
-print("DIR CONTENTS:", os.listdir("/mount/src/dilution-analyzer/sec-edgar-filings"))
+ 
 
 # -------------------- Config --------------------
 USER_AGENT = {"User-Agent": "DilutionAnalyzerBot/1.0"}
 
+# --- Setup ---
+dl = Downloader(email_address="ashleymcgavern@yahoo.com", company_name="Dilution Analyzer")
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# --- Utility: Fetch SEC JSON ---
 def fetch_sec_json(cik, headers=None):
     """
     Fetches the SEC JSON data for a given CIK.
@@ -53,8 +48,8 @@ def fetch_sec_json(cik, headers=None):
 def get_cik_from_ticker(ticker):
     """Fetch CIK from SEC API with retry mechanism."""
     url = "https://www.sec.gov/files/company_tickers.json"
-    headers = {"User-Agent": "DilutionAnalyzerBot/1.0"}
-
+    headers = USER_AGENT
+    
     for attempt in range(3):  # ✅ Retries up to 3 times
         try:
             res = requests.get(url, headers=headers)
@@ -66,24 +61,8 @@ def get_cik_from_ticker(ticker):
             logger.warning(f"Attempt {attempt + 1}: SEC API returned status {res.status_code}")
         except Exception as e:
             logger.error(f"Error fetching CIK for {ticker}: {e}")
-
         time.sleep(2)  # ✅ Wait before retrying
-
     return None  # ✅ Returns None instead of crashing
-
-
-
-    # Ensure ticker is defined before proceeding
-    if ticker:
-        cik = get_cik_from_ticker(ticker)
-        if cik:
-            try:
-                dl.get("10-Q", ticker)
-                dl.get("10-K", ticker)
-                print("SEC Filings Downloaded!")
-            except Exception as e:
-                logger.error(f"{ticker} - Failed to download filings: {e}")
-
 
 # -------------------- Module 1: Market Cap --------------------
 def get_market_cap(ticker):
