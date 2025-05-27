@@ -627,7 +627,7 @@ if ticker:
         st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
 
         # Module 2: Cash Runway
-        cash, burn = get_cash_and_burn_dl(ticker, dl) or (0, 0)  # ✅ Guarantees valid values
+        cash, burn = get_cash_and_burn_dl(ticker, cik) or (0, 0)  # ✅ Guarantees valid values
         runway = round(cash / burn, 1) if cash and burn else None
         st.subheader("2. Cash Runway")
         if cash:
