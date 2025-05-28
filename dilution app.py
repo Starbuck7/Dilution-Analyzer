@@ -257,7 +257,6 @@ def download_and_extract_cash_runway(ticker, filing_type="10-Q"):
     Returns dict as per extract_cash_runway_from_html.
     """
     # Download latest filing
-    dl = Downloader(os.getcwd())
     try:
         dl.get(filing_type, ticker, amount=1)
     except Exception as ex:
