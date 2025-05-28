@@ -111,96 +111,174 @@ def _parse_market_cap_str(market_cap_str):
         return None
 
 # -------------------- Module 2: Cash Runway --------------------
-# --- Module 2: Cash Runway (Optimized) ---
-def extract_cash_position(text):
-    pattern = r'cash and cash equivalents(?:[^$\d]{0,60})\$?([\d,\.]+)'
-    match = re.search(pattern, text, re.IGNORECASE)
-    if match:
-        return parse_dollar_amount(match.group(1))
-    return None
 
-def extract_operating_cash_flow(text):
-    pattern = r'net cash used in operating activities[^$\d]{0,80}\$?([\d,\.]+)'
-    matches = list(re.finditer(pattern, text, re.IGNORECASE | re.DOTALL))
-    for match in matches:
-        value_str = match.group(1)
-        value = parse_dollar_amount(value_str)
-        window_start = max(0, match.start() - 300)
-        window_text = text[window_start:match.start()].lower()
-        months_map = {"three": 3, "six": 6, "nine": 9, "twelve": 12}
-        for period in months_map:
-            if period in window_text:
-                return value, months_map[period]
-    return None, None
+# Setup logger
+logger = logging.getLogger("CashRunway")
+logger.setLevel(logging.INFO)
 
-def parse_dollar_amount(text):
-    match = re.search(r'\$?\(?([\d,\.]+)\)?', text)
-    if match:
-        amount = match.group(1).replace(",", "")
-        try:
-            return float(amount)
-        except ValueError:
-            return None
-    return None
-
-def download_and_get_latest_filing_text(cik, form_types=("10-Q", "10-K")):
-    """
-    Finds the most recent 10-Q or 10-K, downloads it if needed, and returns the filing text.
-    Returns (form_type, filing_text) or (None, None) on failure.
-    """
-    data = fetch_sec_json(cik)
-    if not data:
-        return None, None
-
-    filings = data.get("filings", {}).get("recent", {})
-    forms = filings.get("form", [])
-    accessions = filings.get("accessionNumber", [])
-    docs = filings.get("primaryDocument", [])
-    for i, form in enumerate(forms):
-        if form in form_types:
-            accession = accessions[i].replace("-", "")
-            doc = docs[i]
-            filing_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-            try:
-                filing_text = requests.get(filing_url, headers=USER_AGENT).text
-                return form, filing_text
-            except Exception as e:
-                logger.error(f"Failed to fetch filing {filing_url}: {e}")
-                continue
-    return None, None
-
-def get_cash_and_burn_dl(ticker, cik=None):
-    """
-    Extracts cash position and burn rate from the most recent 10-Q or 10-K.
-    If cik is not provided, will attempt to look up from ticker.
-    """
+def clean_numeric(val):
+    """Clean common SEC number formatting and convert to float."""
+    if not val:
+        return None
+    val = val.replace("$", "").replace(",", "").replace("(", "-").replace(")", "")
     try:
-        if cik is None:
-            cik = get_cik_from_ticker(ticker)
-        if not cik:
-            logger.error(f"CIK not found for ticker {ticker}")
-            return None, None
+        return float(val)
+    except Exception:
+        return None
 
-        form, filing_text = download_and_get_latest_filing_text(cik)
-        if not filing_text:
-            logger.warning(f"No recent 10-Q or 10-K found for {ticker}")
-            return None, None
+def find_period_in_headers(headers):
+    """Extract period (months) from header strings."""
+    periods = {"three": 3, "3": 3, "six": 6, "6": 6, "nine": 9, "9": 9, "twelve": 12, "12": 12}
+    for h in headers:
+        for key, val in periods.items():
+            if re.search(rf"\b{key}\b", h.lower()):
+                return val
+    return None
 
-        text = filing_text.lower()
-        cash = extract_cash_position(text)
-        burn_raw, months = extract_operating_cash_flow(text)
-        monthly_burn = burn_raw / months if burn_raw and months else None
+def extract_value_from_plaintext(text, label_patterns):
+    """
+    Fallback: search for a label in plain text and extract the first dollar amount after it.
+    Returns (value, period) if found, else (None, None)
+    """
+    periods = {"three": 3, "six": 6, "nine": 9, "twelve": 12}
+    for pattern in label_patterns:
+        regex = re.compile(pattern + r".{0,100}?\$?([\(]?-?[\d,\.]+[\)]?)", re.IGNORECASE)
+        match = regex.search(text)
+        if match:
+            value_str = match.group(1)
+            value = clean_numeric(value_str)
+            # Try to find period in preceding text
+            start_idx = max(0, match.start() - 300)
+            window = text[start_idx:match.start()].lower()
+            period = None
+            for k, v in periods.items():
+                if k in window:
+                    period = v
+                    break
+            logger.info(f"Plaintext fallback: found {pattern} = {value}, period = {period}")
+            return value, period
+    return None, None
 
-        if cash is None or monthly_burn is None:
-            logger.warning(f"{ticker} - Cash or Burn rate extraction failed.")
-            return None, None
+def extract_cash_runway_from_html(html, report_date=None):
+    """
+    Extract cash, burn (monthly), and runway from 10-Q/K HTML.
+    Returns dict with cash, monthly_burn, runway, and period (months).
+    """
+    soup = BeautifulSoup(html, "lxml")
+    cash_value, burn_value = None, None
+    cash_period, burn_period = None, None
+    cash_col_idx, burn_col_idx = None, None
+    most_recent_col_idx = None
+    period_months = None
 
-        logger.info(f"{ticker}: Cash: {cash}, Burn: {monthly_burn}")
-        return cash, monthly_burn
+    # --- Table Parsing Section ---
+    logger.info("Scanning tables for values...")
+    for table in soup.find_all("table"):
+        rows = table.find_all("tr")
+        if not rows or len(rows) < 2:
+            continue
+        header_cells = rows[0].find_all(["th", "td"])
+        headers = [cell.get_text(strip=True) for cell in header_cells]
+        # Find the most recent column (date or highest period)
+        col_candidates = []
+        for idx, header in enumerate(headers):
+            # Look for a date, prefer report_date if known
+            date_match = re.search(r"(\w+\s+\d{1,2},\s+\d{4})", header)
+            if date_match:
+                try:
+                    col_date = datetime.strptime(date_match.group(1), "%B %d, %Y")
+                    col_candidates.append((idx, col_date))
+                except Exception:
+                    pass
+            # Look for period
+            period_match = re.search(r"(three|six|nine|twelve)[ -]?months", header.lower())
+            if period_match:
+                period_map = {"three": 3, "six": 6, "nine": 9, "twelve": 12}
+                period = period_map[period_match.group(1)]
+                col_candidates.append((idx, period))
+        # Use most recent date or highest period, else fallback to 1 (first data col)
+        if col_candidates:
+            # Prefer latest date, else largest period
+            if all(isinstance(x[1], datetime) for x in col_candidates):
+                most_recent_col_idx = max(col_candidates, key=lambda x: x[1])[0]
+            else:
+                most_recent_col_idx = max(col_candidates, key=lambda x: x[1])[0]
+        else:
+            most_recent_col_idx = 1  # Default: first data column
 
-    except Exception as e:
-        logger.error(f"{ticker} - Error in get_cash_and_burn_dl: {e}")
-        return 0, 0
+        # Scan rows for cash and burn
+        for row in rows[1:]:
+            cells = row.find_all(["td", "th"])
+            label = cells[0].get_text(strip=True).lower()
+            # Cash
+            if ("cash" == label or "cash and cash equivalents" in label) and cash_value is None:
+                idx = min(most_recent_col_idx, len(cells)-1)
+                cash_value = clean_numeric(cells[idx].get_text(strip=True))
+                cash_col_idx = idx
+                cash_period = find_period_in_headers(headers)
+                logger.info(f"Table: found cash={cash_value} at col {cash_col_idx}")
+            # Burn
+            if "net cash used in operating activities" in label and burn_value is None:
+                idx = min(most_recent_col_idx, len(cells)-1)
+                burn_value = clean_numeric(cells[idx].get_text(strip=True))
+                burn_col_idx = idx
+                burn_period = find_period_in_headers(headers)
+                logger.info(f"Table: found burn={burn_value} at col {burn_col_idx}")
+
+    # --- Fallback to Plain Text if Needed ---
+    if cash_value is None or burn_value is None:
+        text = soup.get_text(separator=" ", strip=True)
+        if cash_value is None:
+            cash_patterns = [r"cash and cash equivalents", r"\bcash\b"]
+            cash_value, cash_period = extract_value_from_plaintext(text, cash_patterns)
+        if burn_value is None:
+            burn_patterns = [r"net cash used in operating activities"]
+            burn_value, burn_period = extract_value_from_plaintext(text, burn_patterns)
+
+    # --- Period Selection Logic ---
+    # Prefer burn_period, else cash_period, else fallback to 3 months
+    period_months = burn_period or cash_period or 3
+
+    # --- Final Calculations ---
+    monthly_burn = abs(burn_value) / period_months if burn_value is not None and period_months else None
+    runway = cash_value / monthly_burn if cash_value is not None and monthly_burn else None
+
+    return {
+        "cash": cash_value,
+        "monthly_burn": monthly_burn,
+        "runway": runway,
+        "period_months": period_months,
+        "burn_total": burn_value
+    }
+
+def download_and_extract_cash_runway(ticker, filing_type="10-Q"):
+    """
+    Download the latest 10-Q or 10-K, extract cash runway details.
+    Returns dict as per extract_cash_runway_from_html.
+    """
+    # Download latest filing
+    dl = Downloader(os.getcwd())
+    try:
+        dl.get(filing_type, ticker, amount=1)
+    except Exception as ex:
+        logger.warning(f"Download error for {ticker}: {ex}")
+        return None
+    filing_dir = os.path.join(
+        os.getcwd(), "sec-edgar-filings", ticker, filing_type.replace("-", ""), "latest"
+    )
+    if not os.path.exists(filing_dir):
+        logger.warning(f"No filing dir for {ticker}")
+        return None
+
+    # Find the first HTML file
+    html_files = [f for f in os.listdir(filing_dir) if f.endswith(".htm") or f.endswith(".html")]
+    if not html_files:
+        logger.warning(f"No HTML files found for {ticker}")
+        return None
+    with open(os.path.join(filing_dir, html_files[0]), "r", encoding="utf-8", errors="ignore") as f:
+        html = f.read()
+    # Optionally: extract report date from filename or HTML
+    return extract_cash_runway_from_html(html)
 
 # --- Module 3: ATM Offering Capacity ---
 def get_atm_offering(cik, lookback=10):
@@ -627,18 +705,27 @@ if ticker:
         st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
 
         # Module 2: Cash Runway
-        cash, burn = get_cash_and_burn_dl(ticker, cik) or (0, 0)  # ✅ Guarantees valid values
-        runway = round(cash / burn, 1) if cash and burn else None
-        st.subheader("2. Cash Runway")
-        if cash:
-            st.write(f"Cash: ${cash:,.0f}")
-        if burn:
-            st.write(f"Monthly Burn Rate: ${burn:,.0f}")
-        if runway:
-            st.write(f"Runway: {runway:.1f} months")
-        else:
-            st.warning("Cash or burn rate not found.")
+        st.header("Module 2: Cash Runway")
 
+        ticker = st.text_input("Ticker Symbol", placeholder="e.g. ICCT")
+        if st.button("Analyze Cash Runway"):
+            with st.spinner(f"Analyzing {ticker}..."):
+                result = download_and_extract_cash_runway(ticker)
+            if result:
+                cash = result["cash"]
+                monthly_burn = result["monthly_burn"]
+                runway = result["runway"]
+                period_months = result["period_months"]
+                burn_total = result["burn_total"]
+                if cash is not None and monthly_burn is not None and runway is not None:
+                    st.success(f"**Cash:** ${cash:,.0f}")
+                    st.info(f"**Net Cash Used in Operating Activities (total):** ${burn_total:,.0f} over {period_months} months")
+                    st.info(f"**Monthly Burn Rate:** ${monthly_burn:,.0f}")
+                    st.warning(f"**Runway:** {runway:.1f} months")
+                else:
+                    st.error(f"Could not extract all values. Cash: {cash}, Burn: {burn_total}, Period: {period_months}")
+            else:
+            st.error("Failed to analyze cash runway for this ticker. See logs for details.")
 
         # ATM Offering
         atm, atm_url = get_atm_offering(cik, lookback=10)
