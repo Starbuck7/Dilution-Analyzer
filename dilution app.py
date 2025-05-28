@@ -516,11 +516,9 @@ def get_historical_capital_raises(cik):
     except Exception as e:
         print(f"Error in get_historical_capital_raises: {e}")
         return None
-# -------------------- Module 7: Get Public Float ---------------------
 
 
-
-# -------------------- Module 8: Offering Ability --------------------
+# -------------------- Module 7: Offering Ability --------------------
 def get_shelf_registered_shares(cik, num_filings=10):
     try:
         cik_str = str(cik).zfill(10)
@@ -592,7 +590,7 @@ def estimate_offering_ability(cik):
         return {}
 
 
-# -------------------- Module 9: Dilution Pressure Score --------------------
+# -------------------- Module 8: Dilution Pressure Score --------------------
 def get_atm_capacity_score(atm_capacity_usd, market_cap):
     if not atm_capacity_usd or not market_cap:
         return 10  # neutral if missing
@@ -698,71 +696,68 @@ if ticker:
     else:
         st.success(f"CIK found: {cik}")
 
-        # Market Cap
+        #Module 1: Market Cap
         market_cap = get_market_cap(ticker)
         st.subheader("1. Market Cap")
         st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
 
         # Module 2: Cash Runway
         st.header("Module 2: Cash Runway")
-
-        if st.button("Analyze Cash Runway"):
-            with st.spinner(f"Analyzing {ticker}..."):
-                result = download_and_extract_cash_runway(ticker)
-            if result:
-                cash = result["cash"]
-                monthly_burn = result["monthly_burn"]
-                runway = result["runway"]
-                period_months = result["period_months"]
-                burn_total = result["burn_total"]
-                if cash is not None and monthly_burn is not None and runway is not None:
-                    st.success(f"**Cash:** ${cash:,.0f}")
-                    st.info(f"**Net Cash Used in Operating Activities (total):** ${burn_total:,.0f} over {period_months} months")
-                    st.info(f"**Monthly Burn Rate:** ${monthly_burn:,.0f}")
-                    st.warning(f"**Runway:** {runway:.1f} months")
-                else:
-                    st.error(f"Could not extract all values. Cash: {cash}, Burn: {burn_total}, Period: {period_months}")
-            else:
-                st.error("Failed to analyze cash runway for this ticker. See logs for details.")
-
-        # ATM Offering
+        cash_runway_result = download_and_extract_cash_runway(ticker)
+        if cash_runway_result:
+            cash = cash_runway_result["cash"]
+            monthly_burn = cash_runway_result["monthly_burn"]
+            runway = cash_runway_result["runway"]
+            period_months = cash_runway_result["period_months"]
+            burn_total = cash_runway_result["burn_total"]
+            st.write(f"**Cash:** ${cash:,.0f}" if cash is not None else "Cash: Not found")
+            st.write(f"**Net Cash Used in Operating Activities (total):** ${burn_total:,.0f} over {period_months} months" if burn_total is not None else "Net cash used: Not found")
+            st.write(f"**Monthly Burn Rate:** ${monthly_burn:,.0f}" if monthly_burn is not None else "Monthly Burn Rate: Not found")
+            st.write(f"**Runway:** {runway:.1f} months" if runway is not None else "Runway: Not found")
+        else:
+            st.error("Failed to analyze cash runway for this ticker.")
+            
+        #Module 3: ATM Offering Capacity
         atm, atm_url = get_atm_offering(cik, lookback=10)
         st.subheader("3. ATM Offering Capacity")
         if atm:
             st.write(f"${atm:,.0f}")
-            st.markdown(f"[Source Document]({atm_url})")
+            if atm_url:
+                st.markdown(f"[Source Document]({atm_url})")
         else:
             st.write("No ATM filing found.")
 
-        # Authorized vs Outstanding
-        float = get_public_float(cik)
+        #Module 4: Authorized vs Outstanding Shares & Float
+        float_val = get_public_float(cik)
         authorized = get_authorized_shares(cik)
         outstanding = get_outstanding_shares(cik)
         st.subheader("4. Authorized vs Outstanding Shares")
-        st.write(f"Public Float: {float:,}" if float else "Not found")
-        st.write(f"Authorized Shares: {authorized:,}" if authorized else "Not found")
-        st.write(f"Outstanding Shares: {outstanding:,}" if outstanding else "Not found")
+        st.write(f"Public Float: {float_val:,}" if float_val else "Public Float: Not found")
+        st.write(f"Authorized Shares: {authorized:,}" if authorized else "Authorized Shares: Not found")
+        st.write(f"Outstanding Shares: {outstanding:,}" if outstanding else "Outstanding Shares: Not found")
 
-        # Convertibles & Warrants
+        #Moduele 5: Convertibles & Warrants
         instruments, cw_url = get_convertibles_and_warrants(cik)
         st.subheader("5. Convertibles and Warrants")
         if instruments:
             st.write(", ".join(set(instruments)))
-            st.markdown(f"[Source Document]({cw_url})")
+            if cw_url:
+                st.markdown(f"[Source Document]({cw_url})")
         else:
             st.write("No convertible instruments or warrants detected.")
 
-        # Historical Capital Raises
+        #Module 6: Historical Capital Raises
         raises = get_historical_capital_raises(cik)
         st.subheader("6. Historical Capital Raises")
         if raises:
             for entry in raises:
                 st.write(f"- {entry['form']} on {entry['date']}: ${entry['amount']:,.0f}")
-                st.markdown(f"[Filing]({entry['url']})")
+                if entry.get('url'):
+                    st.markdown(f"[Filing]({entry['url']})")
         else:
             st.write("No historical raises found.")
 
-        # Offering Ability
+        #Module 7: Offering Ability
         offering_data = estimate_offering_ability(cik)
         st.subheader("7. Offering Ability")
         for k, v in offering_data.items():
@@ -774,56 +769,37 @@ if ticker:
             except Exception as ex:
                 st.write(f"{k}: [error displaying value] ({ex})")
 
-        # Gathering all values for Dilution Score
-        available_dilution_shares = (authorized - outstanding) if authorized and outstanding else 0
-        convertible_total_usd = 2_000_000 if instruments else 0  # ✅ Correct
-        num_raises_past_year = len([
-            entry for entry in raises
-            if datetime.strptime(entry["date"], "%Y-%m-%d") > datetime.now() - timedelta(days=365)
-        ]) if raises else 0
+      # 8. Dilution Pressure Score
+        st.subheader("8. Dilution Pressure Score")
+        st.caption("Combines cash runway, ATM capacity, dilution ability, and more to assess dilution risk.")
+        try:
+            available_dilution_shares = (authorized - outstanding) if authorized and outstanding else 0
+            convertible_total_usd = 2_000_000 if instruments else 0  # Placeholder estimate
+            num_raises_past_year = len([
+                entry for entry in raises
+                if datetime.strptime(entry["date"], "%Y-%m-%d") > datetime.now() - timedelta(days=365)
+            ]) if raises else 0
 
-        # Optional red flag (for future expansion)
-        red_flags_score = 0
+            score = calculate_dilution_pressure_score(
+                atm_capacity_usd=atm,
+                authorized_shares=authorized,
+                outstanding_shares=outstanding,
+                convertibles=convertible_total_usd,
+                capital_raises_past_year=num_raises_past_year,
+                cash_runway=runway if cash_runway_result else None,
+                market_cap=market_cap
+            )
 
-      # Module 9: Calculate Dilution Pressure Score
-try:
-    convertible_total_usd = 2_000_000 if instruments else 0  # ✅ Placeholder estimate
-    available_dilution_shares = (authorized - outstanding) if authorized and outstanding else 0
-    num_raises_past_year = len([
-        entry for entry in raises
-        if datetime.strptime(entry["date"], "%Y-%m-%d") > datetime.now() - timedelta(days=365)
-    ]) if raises else 0
+            if score is not None:
+                st.metric("Score (0-100)", f"{score}")
+                if score > 70:
+                    st.warning("⚠️ High Dilution Risk")
+                elif score > 40:
+                    st.info("🟡 Moderate Dilution Risk")
+                else:
+                    st.success("🟢 Low Dilution Risk")
+            else:
+                st.write("Insufficient data to calculate score.")
 
-    score = calculate_dilution_pressure_score(
-        atm_capacity_usd=atm,
-        authorized_shares=authorized,
-        outstanding_shares=outstanding,
-        convertibles=convertible_total_usd,
-        capital_raises_past_year=num_raises_past_year,
-        cash_runway=runway,
-        market_cap=market_cap
-    )
-
-    st.subheader("8. Dilution Pressure Score")
-    st.caption("Combines cash runway, ATM capacity, dilution ability, and more to assess dilution risk.")
-    if score is not None:
-        st.metric("Score (0-100)", f"{score}")
-        if score > 70:
-            st.warning("⚠️ High Dilution Risk")
-        elif score > 40:
-            st.info("🟡 Moderate Dilution Risk")
-        else:
-            st.success("🟢 Low Dilution Risk")
-    else:
-        st.write("Insufficient data to calculate score.")
-
-except Exception as e:
-    st.subheader("8. Dilution Pressure Score")
-    st.error(f"Error calculating score: {e}")
-
-
-
-
-
-
-
+        except Exception as e:
+            st.error(f"Error calculating score: {e}") 
