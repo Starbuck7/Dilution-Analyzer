@@ -723,7 +723,7 @@ if ticker:
                     st.warning(f"**Runway:** {runway:.1f} months")
                 else:
                     st.error(f"Could not extract all values. Cash: {cash}, Burn: {burn_total}, Period: {period_months}")
-             else:
+            else:
                 st.error("Failed to analyze cash runway for this ticker. See logs for details.")
 
         # ATM Offering
