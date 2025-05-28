@@ -707,7 +707,6 @@ if ticker:
         # Module 2: Cash Runway
         st.header("Module 2: Cash Runway")
 
-        ticker = st.text_input("Ticker Symbol", placeholder="e.g. ICCT")
         if st.button("Analyze Cash Runway"):
             with st.spinner(f"Analyzing {ticker}..."):
                 result = download_and_extract_cash_runway(ticker)
@@ -725,7 +724,7 @@ if ticker:
                 else:
                     st.error(f"Could not extract all values. Cash: {cash}, Burn: {burn_total}, Period: {period_months}")
              else:
-             st.error("Failed to analyze cash runway for this ticker. See logs for details.")
+                st.error("Failed to analyze cash runway for this ticker. See logs for details.")
 
         # ATM Offering
         atm, atm_url = get_atm_offering(cik, lookback=10)
