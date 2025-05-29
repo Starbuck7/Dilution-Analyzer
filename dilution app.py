@@ -65,16 +65,17 @@ def get_cik_from_ticker(ticker):
 
 # -------------------- Module 1: Market Cap --------------------
 def get_market_cap(ticker):
-    # Try yfinance
     try:
         yf_ticker = yf.Ticker(ticker)
         info = yf_ticker.info
+        print("yfinance info:", info)  # Add this
         market_cap = info.get('marketCap')
         if market_cap:
             logger.info(f"Market cap for {ticker} from yfinance: {market_cap}")
             return market_cap
     except Exception as e:
         logger.warning(f"yfinance failed for {ticker} with error: {e}")
+    # ...rest unchanged...
 
     # Try yahoo_fin.get_quote_table
     try:
@@ -261,18 +262,22 @@ def download_and_extract_cash_runway(ticker, filing_type="10-Q"):
         dl.get(filing_type, ticker, amount=1)
     except Exception as ex:
         logger.warning(f"Download error for {ticker}: {ex}")
+        print("Download error:", ex)
         return None
     filing_dir = os.path.join(
         os.getcwd(), "sec-edgar-filings", ticker, filing_type.replace("-", ""), "latest"
     )
+    print("filing_dir:", filing_dir)
     if not os.path.exists(filing_dir):
         logger.warning(f"No filing dir for {ticker}")
+        print("No filing dir found.")
         return None
 
     # Find the first HTML file
     html_files = [f for f in os.listdir(filing_dir) if f.endswith(".htm") or f.endswith(".html")]
     if not html_files:
         logger.warning(f"No HTML files found for {ticker}")
+        print("No HTML files found.")
         return None
     with open(os.path.join(filing_dir, html_files[0]), "r", encoding="utf-8", errors="ignore") as f:
         html = f.read()
@@ -434,16 +439,16 @@ def get_public_float(cik):
         return None
        
 # -------------------- Module 5: Convertibles and Warrants --------------------
-def get_convertibles_and_warrants(cik):
+def get_convertibles_and_warrants_with_amounts(cik):
     try:
         data = fetch_sec_json(cik)
         if not data:
-            return None, None
+            return [], []
         filings = data.get("filings", {}).get("recent", {})
         forms = filings.get("form", [])
         accessions = filings.get("accessionNumber", [])
         docs = filings.get("primaryDocument", [])
-        instruments = []
+        results = []
         for i, form in enumerate(forms):
             if form in ["10-Q", "10-K", "8-K"]:
                 if i >= len(accessions) or i >= len(docs):
@@ -453,24 +458,42 @@ def get_convertibles_and_warrants(cik):
                 html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
                 html = requests.get(html_url, headers=USER_AGENT).text
                 text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
-                patterns = [
-                    r"(?:convertible\s+(?:notes|debentures|securities)[^\.]{0,100})",
-                    r"(?:warrants\s+to\s+purchase\s+[^\.;]{0,100})",
-                    r"(?:preferred\s+stock\s+convertible\s+into\s+common\s+stock[^\.]{0,100})"
-                ]
-                for pattern in patterns:
-                    matches = re.findall(pattern, text, re.IGNORECASE)
-                    for match in matches:
-                        instruments.append(match.strip())
-                if instruments:
-                    return instruments, html_url  # Return on first good find
-        return None, None
+                # Look for convertible debt/notes
+                conv = re.findall(r"convertible.*?(?:notes?|debentures?).{0,100}?\$([-\d,\.]+)", text, re.IGNORECASE)
+                # Look for warrants
+                warrants = re.findall(r"warrants?.{0,30}?(?:to purchase)?\s*([-\d,\.]+)\s*(?:shares|stock)?", text, re.IGNORECASE)
+                result = {}
+                if conv:
+                    try:
+                        result["convertible"] = float(conv[0].replace(",", ""))
+                    except:
+                        result["convertible"] = conv[0]
+                if warrants:
+                    try:
+                        result["warrants"] = float(warrants[0].replace(",", ""))
+                    except:
+                        result["warrants"] = warrants[0]
+                if result:
+                    results.append((result, html_url))
+        return results  # List of (dict, url)
     except Exception as e:
-        print(f"Error in get_convertibles_and_warrants: {e}")
-        return None, None
+        print(f"Error in get_convertibles_and_warrants_with_amounts: {e}")
+        return []
 
 
 # -------------------- Module 6: Historical Capital Raises --------------------
+def summarize_recent_cap_raises(raises, months=18):
+    """Summarize capital raises in the past 'months' months."""
+    if not raises:
+        return 0, 0.0, []
+    cutoff = datetime.now() - timedelta(days=months*30)
+    recent = [
+        entry for entry in raises
+        if "date" in entry and datetime.strptime(entry["date"], "%Y-%m-%d") > cutoff
+    ]
+    total_amt = sum(entry["amount"] for entry in recent)
+    return len(recent), total_amt, recent
+    
 def get_historical_capital_raises(cik):
     try:
         data = fetch_sec_json(cik)
@@ -568,26 +591,18 @@ def estimate_offering_ability(cik):
         atm_usd, _ = get_atm_offering(cik)
         shelf_usd = get_shelf_registered_shares(cik)
         float_shares = get_public_float(cik)
-        # Needs ticker for price, which is not passed here; you may want to refactor this to accept ticker as arg.
-        # float_price = get_last_close_price(ticker)
-        max_baby_shelf = None
-        # if float_shares and float_price:
-        #     float_value = float_shares * float_price
-        #     if float_value < 75000000:
-        #         max_baby_shelf = float_value / 3
-        ceiling_usd = min([
-            x for x in [atm_usd, shelf_usd, max_baby_shelf] if x is not None
-        ], default=0)
-        return {
+        values = {
             "Available Shares": available_shares,
             "ATM Capacity": atm_usd,
             "Shelf Registered Shares": shelf_usd,
-            "Max Baby Shelf": max_baby_shelf,
-            "Offering Ceiling": ceiling_usd
+            "Public Float": float_shares
         }
+        if not any(v for v in values.values() if v):
+            return {"Status": "Unable to determine offering ability (missing data)"}
+        return values
     except Exception as e:
         print(f"Error estimating offering ability: {e}")
-        return {}
+        return {"Status": f"Error: {e}"}
 
 
 # -------------------- Module 8: Dilution Pressure Score --------------------
@@ -737,26 +752,30 @@ if ticker:
         st.write(f"Outstanding Shares: {outstanding:,}" if outstanding else "Outstanding Shares: Not found")
 
         #Moduele 5: Convertibles & Warrants
-        instruments, cw_url = get_convertibles_and_warrants(cik)
+        convertible_results = get_convertibles_and_warrants_with_amounts(cik)
         st.subheader("5. Convertibles and Warrants")
-        if instruments:
-            st.write(", ".join(set(instruments)))
-            if cw_url:
-                st.markdown(f"[Source Document]({cw_url})")
+        if convertible_results:
+            for r, url in convertible_results:
+            st.write(", ".join(f"{k}: {v}" for k, v in r.items()))
+            st.markdown(f"[Source Document]({url})")
         else:
             st.write("No convertible instruments or warrants detected.")
 
         #Module 6: Historical Capital Raises
         raises = get_historical_capital_raises(cik)
         st.subheader("6. Historical Capital Raises")
+
         if raises:
+            count_18mo, total_18mo, raises_18mo = summarize_recent_cap_raises(raises, months=18)
+            st.write(f"**Raises in last 18 months:** {count_18mo}  |  **Total Raised:** ${total_18mo:,.0f}")
+            st.write("**All Raises:**")
             for entry in raises:
                 st.write(f"- {entry['form']} on {entry['date']}: ${entry['amount']:,.0f}")
                 if entry.get('url'):
                     st.markdown(f"[Filing]({entry['url']})")
         else:
             st.write("No historical raises found.")
-
+            
         #Module 7: Offering Ability
         offering_data = estimate_offering_ability(cik)
         st.subheader("7. Offering Ability")
