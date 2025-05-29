@@ -548,7 +548,7 @@ def get_shelf_registered_shares(cik, num_filings=10):
         filing_types = ['S-3', 'S-1', '424B3']
         all_text = ""
         for form_type in filing_types:
-            dl.get(form_type, cik_str, amount=num_filings)
+            dl.get(form_type, cik_str)
             path = f"/tmp/sec/sec-edgar-filings/{cik_str}/{form_type.lower()}"
             for subdir, _, files in os.walk(path):
                 for file in files:
@@ -792,13 +792,21 @@ if ticker:
       # 8. Dilution Pressure Score
         st.subheader("8. Dilution Pressure Score")
         st.caption("Combines cash runway, ATM capacity, dilution ability, and more to assess dilution risk.")
+
         try:
+        # Ensure 'instruments' is always defined
+            if "instruments" not in locals():
+                instruments = []
+
             available_dilution_shares = (authorized - outstanding) if authorized and outstanding else 0
             convertible_total_usd = 2_000_000 if instruments else 0  # Placeholder estimate
-            num_raises_past_year = len([
-                entry for entry in raises
-                if datetime.strptime(entry["date"], "%Y-%m-%d") > datetime.now() - timedelta(days=365)
-            ]) if raises else 0
+
+            num_raises_past_year = 0
+            if raises and isinstance(raises, list):
+                num_raises_past_year = len([
+                    entry for entry in raises
+                    if "date" in entry and datetime.strptime(entry["date"], "%Y-%m-%d") > datetime.now() - timedelta(days=365)
+                ])
 
             score = calculate_dilution_pressure_score(
                 atm_capacity_usd=atm,
@@ -806,7 +814,7 @@ if ticker:
                 outstanding_shares=outstanding,
                 convertibles=convertible_total_usd,
                 capital_raises_past_year=num_raises_past_year,
-                cash_runway=runway if cash_runway_result else None,
+                cash_runway=runway if 'runway' in locals() else None,
                 market_cap=market_cap
             )
 
@@ -822,4 +830,4 @@ if ticker:
                 st.write("Insufficient data to calculate score.")
 
         except Exception as e:
-            st.error(f"Error calculating score: {e}") 
+            st.error(f"Error calculating score: {e}")
