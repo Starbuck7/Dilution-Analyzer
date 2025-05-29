@@ -259,7 +259,7 @@ def download_and_extract_cash_runway(ticker, filing_type="10-Q"):
     """
     # Download latest filing
     try:
-        dl.get(filing_type, ticker, amount=1)
+        dl.get(filing_type, ticker)
     except Exception as ex:
         logger.warning(f"Download error for {ticker}: {ex}")
         print("Download error:", ex)
@@ -753,6 +753,7 @@ if ticker:
 
         #Moduele 5: Convertibles & Warrants
         convertible_results = get_convertibles_and_warrants_with_amounts(cik)
+        instruments = convertible_results if convertible_results else []  # Always define instruments
         st.subheader("5. Convertibles and Warrants")
         if convertible_results:
             for r, url in convertible_results:
