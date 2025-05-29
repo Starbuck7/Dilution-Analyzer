@@ -756,8 +756,8 @@ if ticker:
         st.subheader("5. Convertibles and Warrants")
         if convertible_results:
             for r, url in convertible_results:
-            st.write(", ".join(f"{k}: {v}" for k, v in r.items()))
-            st.markdown(f"[Source Document]({url})")
+                st.write(", ".join(f"{k}: {v}" for k, v in r.items()))
+                st.markdown(f"[Source Document]({url})")
         else:
             st.write("No convertible instruments or warrants detected.")
 
