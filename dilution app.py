@@ -23,6 +23,27 @@ warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def show_directory_tree(base_path, max_depth=3, _prefix=''):
+    """Recursively display folders and files starting from base_path."""
+    try:
+        if max_depth <= 0:
+            return
+        items = os.listdir(base_path)
+        for item in items:
+            item_path = os.path.join(base_path, item)
+            if os.path.isdir(item_path):
+                st.write(f"{_prefix}📁 {item}/")
+                show_directory_tree(item_path, max_depth-1, _prefix + '    ')
+            else:
+                st.write(f"{_prefix}📄 {item}")
+    except Exception as e:
+        st.write(f"Error accessing {base_path}: {e}")
+
+# Example usage in your app:
+if st.button("Show SEC Filings Directory Structure"):
+    st.write("## sec-edgar-filings directory:")
+    show_directory_tree('sec-edgar-filings')
+
 # --- Utility: Fetch SEC JSON ---
 def fetch_sec_json(cik, headers=None):
     """
