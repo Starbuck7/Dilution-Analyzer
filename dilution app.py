@@ -287,7 +287,7 @@ def download_and_extract_cash_runway(ticker, filing_type="10-Q"):
 # --- Module 3: ATM Offering Capacity ---
 def get_atm_offering(cik, lookback=10):
     try:
-        data = fetch_sec_json(cik, headers={"User-Agent": "Ashley (ashleymcgavern@yahoo.com)"})
+        data = fetch_sec_json(cik)
         if not data:
             return None, None
         filings = data.get("filings", {}).get("recent", {})
@@ -794,20 +794,17 @@ if ticker:
         st.caption("Combines cash runway, ATM capacity, dilution ability, and more to assess dilution risk.")
 
         try:
-        # Ensure 'instruments' is always defined
-            if "instruments" not in locals():
-                instruments = []
-
+            # Make sure all variables exist
+            instruments = instruments if 'instruments' in locals() else []
+            raises = raises if 'raises' in locals() else []
             available_dilution_shares = (authorized - outstanding) if authorized and outstanding else 0
-            convertible_total_usd = 2_000_000 if instruments else 0  # Placeholder estimate
-
+            convertible_total_usd = 2_000_000 if instruments else 0  # Or a better estimate!
             num_raises_past_year = 0
             if raises and isinstance(raises, list):
                 num_raises_past_year = len([
                     entry for entry in raises
                     if "date" in entry and datetime.strptime(entry["date"], "%Y-%m-%d") > datetime.now() - timedelta(days=365)
                 ])
-
             score = calculate_dilution_pressure_score(
                 atm_capacity_usd=atm,
                 authorized_shares=authorized,
@@ -817,7 +814,6 @@ if ticker:
                 cash_runway=runway if 'runway' in locals() else None,
                 market_cap=market_cap
             )
-
             if score is not None:
                 st.metric("Score (0-100)", f"{score}")
                 if score > 70:
@@ -828,6 +824,5 @@ if ticker:
                     st.success("🟢 Low Dilution Risk")
             else:
                 st.write("Insufficient data to calculate score.")
-
         except Exception as e:
             st.error(f"Error calculating score: {e}")
