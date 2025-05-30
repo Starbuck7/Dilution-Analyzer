@@ -265,7 +265,6 @@ def download_and_extract_cash_runway(ticker, filing_type="10-Q"):
         logger.warning(f"No filings dir for {ticker}")
         return None
 
-    # Find the most recent accession directory (these are 18-digit numbers)
     subdirs = [
         os.path.join(filings_base_dir, d)
         for d in os.listdir(filings_base_dir)
@@ -274,17 +273,24 @@ def download_and_extract_cash_runway(ticker, filing_type="10-Q"):
     if not subdirs:
         logger.warning(f"No filing subdirs for {ticker}")
         return None
+
     latest_subdir = max(subdirs, key=os.path.getmtime)
 
     html_files = [
         f for f in os.listdir(latest_subdir)
         if f.lower().endswith(".htm") or f.lower().endswith(".html")
     ]
-    if not html_files:
-        logger.warning(f"No HTML files found for {ticker}")
+    txt_files = [f for f in os.listdir(latest_subdir) if f.lower().endswith(".txt")]
+
+    if html_files:
+        filename = html_files[0]
+    elif txt_files:
+        filename = txt_files[0]
+    else:
+        logger.warning(f"No HTML or TXT files found for {ticker}")
         return None
 
-    with open(os.path.join(latest_subdir, html_files[0]), "r", encoding="utf-8", errors="ignore") as f:
+    with open(os.path.join(latest_subdir, filename), "r", encoding="utf-8", errors="ignore") as f:
         html = f.read()
     return extract_cash_runway_from_html(html)
 
