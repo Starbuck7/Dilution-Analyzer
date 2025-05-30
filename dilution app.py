@@ -7,6 +7,7 @@ import logging
 import os
 import yfinance as yf
 import time
+import glob
 from bs4 import XMLParsedAsHTMLWarning
 from datetime import datetime, timedelta
 from yahoo_fin import stock_info as si
@@ -253,35 +254,31 @@ def extract_cash_runway_from_html(html, report_date=None):
     }
 
 def download_and_extract_cash_runway(ticker, filing_type="10-Q"):
-    """
-    Download the latest 10-Q or 10-K, extract cash runway details.
-    Returns dict as per extract_cash_runway_from_html.
-    """
-    # Download latest filing
     try:
         dl.get(filing_type, ticker)
     except Exception as ex:
         logger.warning(f"Download error for {ticker}: {ex}")
-        print("Download error:", ex)
-        return None
-    filing_dir = os.path.join(
-        os.getcwd(), "sec-edgar-filings", ticker, filing_type.replace("-", ""), "latest"
-    )
-    print("filing_dir:", filing_dir)
-    if not os.path.exists(filing_dir):
-        logger.warning(f"No filing dir for {ticker}")
-        print("No filing dir found.")
         return None
 
-    # Find the first HTML file
-    html_files = [f for f in os.listdir(filing_dir) if f.endswith(".htm") or f.endswith(".html")]
+    filings_base_dir = os.path.join(os.getcwd(), "sec-edgar-filings", ticker, filing_type.replace("-", ""))
+    if not os.path.exists(filings_base_dir):
+        logger.warning(f"No filings dir for {ticker}")
+        return None
+
+    # Find the most recent accession directory
+    subdirs = [os.path.join(filings_base_dir, d) for d in os.listdir(filings_base_dir) if os.path.isdir(os.path.join(filings_base_dir, d))]
+    if not subdirs:
+        logger.warning(f"No filing subdirs for {ticker}")
+        return None
+    latest_subdir = max(subdirs, key=os.path.getmtime)
+
+    html_files = [f for f in os.listdir(latest_subdir) if f.endswith(".htm") or f.endswith(".html")]
     if not html_files:
         logger.warning(f"No HTML files found for {ticker}")
-        print("No HTML files found.")
         return None
-    with open(os.path.join(filing_dir, html_files[0]), "r", encoding="utf-8", errors="ignore") as f:
+
+    with open(os.path.join(latest_subdir, html_files[0]), "r", encoding="utf-8", errors="ignore") as f:
         html = f.read()
-    # Optionally: extract report date from filename or HTML
     return extract_cash_runway_from_html(html)
 
 # --- Module 3: ATM Offering Capacity ---
