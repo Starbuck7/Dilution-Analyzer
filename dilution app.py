@@ -39,11 +39,6 @@ def show_directory_tree(base_path, max_depth=3, _prefix=''):
     except Exception as e:
         st.write(f"Error accessing {base_path}: {e}")
 
-# Example usage in your app:
-if st.button("Show SEC Filings Directory Structure"):
-    st.write("## sec-edgar-filings directory:")
-    show_directory_tree('sec-edgar-filings')
-
 # --- Utility: Fetch SEC JSON ---
 def fetch_sec_json(cik, headers=None):
     """
@@ -746,6 +741,10 @@ if ticker:
     else:
         st.success(f"CIK found: {cik}")
 
+        # Example usage in your app:
+    if st.button("Show SEC Filings Directory Structure"):
+        st.write("## sec-edgar-filings directory:")
+        show_directory_tree('sec-edgar-filings')
         #Module 1: Market Cap
         market_cap = get_market_cap(ticker)
         st.subheader("1. Market Cap")
