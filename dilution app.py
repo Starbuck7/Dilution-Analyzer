@@ -255,14 +255,17 @@ def extract_cash_runway_from_html(html, report_date=None):
 
 def download_and_extract_cash_runway(ticker, filing_type="10-Q"):
     try:
-        dl.get(filing_type, ticker)
+        cik = get_cik_from_ticker(ticker)
+        dl.get(filing_type, cik)
     except Exception as ex:
         logger.warning(f"Download error for {ticker}: {ex}")
         return None
 
-    filings_base_dir = os.path.join(os.getcwd(), "sec-edgar-filings", ticker, filing_type.replace("-", ""))
+    # Always use the CIK folder, not the ticker!
+    filings_base_dir = os.path.join(os.getcwd(), "sec-edgar-filings", str(int(cik)), filing_type.replace("-", ""))
     if not os.path.exists(filings_base_dir):
-        logger.warning(f"No filings dir for {ticker}")
+        logger.warning(f"No filings dir for {ticker} (looked for {filings_base_dir})")
+        st.warning(f"No {filing_type} filings were found for {ticker}. (Checked {filings_base_dir})")
         return None
 
     subdirs = [
@@ -271,11 +274,11 @@ def download_and_extract_cash_runway(ticker, filing_type="10-Q"):
         if os.path.isdir(os.path.join(filings_base_dir, d)) and d.isdigit()
     ]
     if not subdirs:
-        logger.warning(f"No filing subdirs for {ticker}")
+        logger.warning(f"No filing subdirs for {ticker} in {filings_base_dir}")
+        st.warning(f"No accession subfolders found for {ticker} in {filings_base_dir}")
         return None
 
     latest_subdir = max(subdirs, key=os.path.getmtime)
-
     html_files = [
         f for f in os.listdir(latest_subdir)
         if f.lower().endswith(".htm") or f.lower().endswith(".html")
@@ -287,7 +290,8 @@ def download_and_extract_cash_runway(ticker, filing_type="10-Q"):
     elif txt_files:
         filename = txt_files[0]
     else:
-        logger.warning(f"No HTML or TXT files found for {ticker}")
+        logger.warning(f"No HTML or TXT files found for {ticker} in {latest_subdir}")
+        st.warning(f"No HTML or TXT files found for {ticker} in {latest_subdir}")
         return None
 
     with open(os.path.join(latest_subdir, filename), "r", encoding="utf-8", errors="ignore") as f:
