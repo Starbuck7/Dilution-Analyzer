@@ -272,9 +272,12 @@ def extract_cash_runway_from_html(html, report_date=None):
 def download_and_extract_cash_runway(ticker, filing_type="10-Q"):
     try:
         cik = get_cik_from_ticker(ticker)
+        st.write("Attempting download...")
         dl.get(filing_type, cik)
+        st.write("Download attempted for ICCT.")
     except Exception as ex:
         logger.warning(f"Download error for {ticker}: {ex}")
+        st.error(f"Download exception: {e}")
         return None
 
     # Always use the CIK folder, not the ticker!
