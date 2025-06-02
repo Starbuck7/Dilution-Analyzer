@@ -26,22 +26,6 @@ warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def show_directory_tree(base_path, max_depth=3, _prefix=''):
-    """Recursively display folders and files starting from base_path."""
-    try:
-        if max_depth <= 0:
-            return
-        items = os.listdir(base_path)
-        for item in items:
-            item_path = os.path.join(base_path, item)
-            if os.path.isdir(item_path):
-                st.write(f"{_prefix}📁 {item}/")
-                show_directory_tree(item_path, max_depth-1, _prefix + '    ')
-            else:
-                st.write(f"{_prefix}📄 {item}")
-    except Exception as e:
-        st.write(f"Error accessing {base_path}: {e}")
-
 # --- Utility: Fetch SEC JSON ---
 def fetch_sec_json(cik, headers=None):
     """
@@ -139,17 +123,26 @@ def get_latest_filing(cik, preferred_forms=("10-Q", "10-K")):
     resp.raise_for_status()
     data = resp.json()
     filings = data.get("filings", {}).get("recent", {})
+
+    forms = filings.get("form", [])
+    accessions = filings.get("accessionNumber", [])
+    docs = filings.get("primaryDocument", [])
+    periods = filings.get("periodOfReport", [])
+
     for form in preferred_forms:
-        for i, f in enumerate(filings.get("form", [])):
+        for i, f in enumerate(forms):
             if f == form:
-                accession = filings["accessionNumber"][i].replace("-", "")
-                file_name = filings["primaryDocument"][i]
-                return {
-                    "form": form,
-                    "accession": accession,
-                    "file_name": file_name,
-                    "period": filings.get("periodOfReport", [None])[i]
-                }
+                # Check if all required lists are long enough
+                if i < len(accessions) and i < len(docs) and i < len(periods):
+                    accession = accessions[i].replace("-", "")
+                    file_name = docs[i]
+                    period = periods[i]
+                    return {
+                        "form": form,
+                        "accession": accession,
+                        "file_name": file_name,
+                        "period": period
+                    }
     raise ValueError("No recent 10-Q or 10-K filing found for this CIK.")
 
 
@@ -664,11 +657,7 @@ if ticker:
     else:
         st.success(f"CIK found: {cik}")
 
-        # Example usage in your app:
-    if st.button("Show SEC Filings Directory Structure"):
-        st.write("## sec-edgar-filings directory:")
-        show_directory_tree('sec-edgar-filings')
-        #Module 1: Market Cap
+     #Module 1: Market Cap
         market_cap = get_market_cap(ticker)
         st.subheader("1. Market Cap")
         st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
