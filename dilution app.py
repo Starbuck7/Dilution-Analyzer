@@ -103,7 +103,7 @@ def _parse_market_cap_str(market_cap_str):
 
 # -------------------- Module 2: Cash Runway --------------------
 
-def get_latest_filing_json(cik, form_types=("10-Q", "10-K")):
+def get_latest_filing(cik, form_types=("10-Q", "10-K")):
     url = f"https://data.sec.gov/submissions/CIK{cik}.json"
     resp = requests.get(url, headers=USER_AGENT)
     resp.raise_for_status()
