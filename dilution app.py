@@ -675,19 +675,26 @@ if ticker:
 
         # Module 2: Cash Runway
         st.header("Module 2: Cash Runway")
-        cash_runway_result = download_and_extract_cash_runway(ticker)
-        if cash_runway_result:
-            cash = cash_runway_result["cash"]
-            monthly_burn = cash_runway_result["monthly_burn"]
-            runway = cash_runway_result["runway"]
-            period_months = cash_runway_result["period_months"]
-            burn_total = cash_runway_result["burn_total"]
-            st.write(f"**Cash:** ${cash:,.0f}" if cash is not None else "Cash: Not found")
-            st.write(f"**Net Cash Used in Operating Activities (total):** ${burn_total:,.0f} over {period_months} months" if burn_total is not None else "Net cash used: Not found")
-            st.write(f"**Monthly Burn Rate:** ${monthly_burn:,.0f}" if monthly_burn is not None else "Monthly Burn Rate: Not found")
-            st.write(f"**Runway:** {runway:.1f} months" if runway is not None else "Runway: Not found")
+    with st.spinner("Analyzing cash runway...")
+        result = get_cash_runway_for_ticker(ticker)
+    if "error" in result:
+        st.error(f"Error: {result['error']}")
+    else:
+        st.success(f"Latest {result['form']} for {ticker} (CIK {result['cik']}):")
+        st.write(f"- Accession: {result['accession']}")
+        st.write(f"- File: {result['file_name']}")
+        if result['period_string']:
+            st.write(f"**Reporting period:** {result['period_string']} ({result['period_months']} months)")
+        if result['cash'] is not None:
+            st.write(f"**Cash and cash equivalents:** ${result['cash']:,}")
+        if result['net_cash_used'] is not None:
+            st.write(f"**Net cash used in operating activities:** ${result['net_cash_used']:,}")
+        if result['burn_rate'] is not None:
+            st.write(f"**Burn rate:** ${result['burn_rate']:,} per month")
+        if result['runway_months'] is not None:
+            st.write(f"### 🚦 Estimated Cash Runway: **{result['runway_months']} months**")
         else:
-            st.error("Failed to analyze cash runway for this ticker.")
+            st.warning("Could not estimate cash runway (missing data).")
             
         #Module 3: ATM Offering Capacity
         atm, atm_url = get_atm_offering(cik, lookback=10)
