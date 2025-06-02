@@ -18,7 +18,7 @@ from functools import lru_cache
 SEC_TICKER_CIK_URL = "https://www.sec.gov/include/ticker.txt"
 SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 SEC_ARCHIVES_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession_nodash}/{file_name}"
-USER_AGENT = {"User-Agent": "DilutionAnalyzerBot/1.0"}
+USER_AGENT = {"User-Agent": "DilutionAnalyzerBot/1.0 (ASHLEYMCGAVERN@YAHOO.COM)"}
 
 # --- Setup ---
 dl = Downloader(email_address="ashleymcgavern@yahoo.com", company_name="Dilution Analyzer")
@@ -52,7 +52,7 @@ def fetch_sec_json(cik, headers=None):
         headers = USER_AGENT
     url = f"https://data.sec.gov/submissions/CIK{str(cik).zfill(10)}.json"
     try:
-        res = requests.get(url, headers=headers)
+        res = requests.get(url, headers=USER_AGENT)
         if res.status_code == 200:
             return res.json()
         else:
@@ -71,7 +71,7 @@ def get_cik_from_ticker(ticker):
     
     for attempt in range(3):  # ✅ Retries up to 3 times
         try:
-            res = requests.get(url, headers=headers)
+            res = requests.get(url, headers=USER_AGENT)
             if res.status_code == 200 and res.text.strip():
                 data = res.json()
                 for item in data.values():
@@ -135,7 +135,7 @@ def _parse_market_cap_str(market_cap_str):
 
 def get_latest_filing(cik, preferred_forms=("10-Q", "10-K")):
     url = SEC_SUBMISSIONS_URL.format(cik=str(cik).zfill(10))
-    resp = requests.get(url, headers=HEADERS)
+    resp = requests.get(url, headers=USER_AGENT)
     resp.raise_for_status()
     data = resp.json()
     filings = data.get("filings", {}).get("recent", {})
@@ -155,7 +155,7 @@ def get_latest_filing(cik, preferred_forms=("10-Q", "10-K")):
 
 def fetch_filing_html(cik, accession, file_name):
     url = SEC_ARCHIVES_URL.format(cik=cik, accession_nodash=accession, file_name=file_name)
-    resp = requests.get(url, headers=HEADERS)
+    resp = requests.get(url, headers=USER_AGENT)
     resp.raise_for_status()
     return resp.text
 
