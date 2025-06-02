@@ -15,6 +15,9 @@ from sec_edgar_downloader import Downloader
 from functools import lru_cache
  
 # -------------------- Config --------------------
+SEC_TICKER_CIK_URL = "https://www.sec.gov/include/ticker.txt"
+SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
+SEC_ARCHIVES_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession_nodash}/{file_name}"
 USER_AGENT = {"User-Agent": "DilutionAnalyzerBot/1.0"}
 
 # --- Setup ---
@@ -130,192 +133,109 @@ def _parse_market_cap_str(market_cap_str):
 
 # -------------------- Module 2: Cash Runway --------------------
 
-# Setup logger
-logger = logging.getLogger("CashRunway")
-logger.setLevel(logging.INFO)
+def get_latest_filing(cik, preferred_forms=("10-Q", "10-K")):
+    url = SEC_SUBMISSIONS_URL.format(cik=str(cik).zfill(10))
+    resp = requests.get(url, headers=HEADERS)
+    resp.raise_for_status()
+    data = resp.json()
+    filings = data.get("filings", {}).get("recent", {})
+    for form in preferred_forms:
+        for i, f in enumerate(filings.get("form", [])):
+            if f == form:
+                accession = filings["accessionNumber"][i].replace("-", "")
+                file_name = filings["primaryDocument"][i]
+                return {
+                    "form": form,
+                    "accession": accession,
+                    "file_name": file_name,
+                    "period": filings.get("periodOfReport", [None])[i]
+                }
+    raise ValueError("No recent 10-Q or 10-K filing found for this CIK.")
 
-def clean_numeric(val):
-    """Clean common SEC number formatting and convert to float."""
-    if not val:
-        return None
-    val = val.replace("$", "").replace(",", "").replace("(", "-").replace(")", "")
-    try:
-        return float(val)
-    except Exception:
-        return None
 
-def find_period_in_headers(headers):
-    """Extract period (months) from header strings."""
-    periods = {"three": 3, "3": 3, "six": 6, "6": 6, "nine": 9, "9": 9, "twelve": 12, "12": 12}
-    for h in headers:
-        for key, val in periods.items():
-            if re.search(rf"\b{key}\b", h.lower()):
-                return val
-    return None
+def fetch_filing_html(cik, accession, file_name):
+    url = SEC_ARCHIVES_URL.format(cik=cik, accession_nodash=accession, file_name=file_name)
+    resp = requests.get(url, headers=HEADERS)
+    resp.raise_for_status()
+    return resp.text
 
-def extract_value_from_plaintext(text, label_patterns):
-    """
-    Fallback: search for a label in plain text and extract the first dollar amount after it.
-    Returns (value, period) if found, else (None, None)
-    """
-    periods = {"three": 3, "six": 6, "nine": 9, "twelve": 12}
-    for pattern in label_patterns:
-        regex = re.compile(pattern + r".{0,100}?\$?([\(]?-?[\d,\.]+[\)]?)", re.IGNORECASE)
-        match = regex.search(text)
-        if match:
-            value_str = match.group(1)
-            value = clean_numeric(value_str)
-            # Try to find period in preceding text
-            start_idx = max(0, match.start() - 300)
-            window = text[start_idx:match.start()].lower()
-            period = None
-            for k, v in periods.items():
-                if k in window:
-                    period = v
-                    break
-            logger.info(f"Plaintext fallback: found {pattern} = {value}, period = {period}")
-            return value, period
-    return None, None
 
-def extract_cash_runway_from_html(html, report_date=None):
-    """
-    Extract cash, burn (monthly), and runway from 10-Q/K HTML.
-    Returns dict with cash, monthly_burn, runway, and period (months).
-    """
+def extract_cash_and_burn(html):
     soup = BeautifulSoup(html, "lxml")
-    cash_value, burn_value = None, None
-    cash_period, burn_period = None, None
-    cash_col_idx, burn_col_idx = None, None
-    most_recent_col_idx = None
-    period_months = None
 
-    # --- Table Parsing Section ---
-    logger.info("Scanning tables for values...")
-    for table in soup.find_all("table"):
-        rows = table.find_all("tr")
-        if not rows or len(rows) < 2:
-            continue
-        header_cells = rows[0].find_all(["th", "td"])
-        headers = [cell.get_text(strip=True) for cell in header_cells]
-        # Find the most recent column (date or highest period)
-        col_candidates = []
-        for idx, header in enumerate(headers):
-            # Look for a date, prefer report_date if known
-            date_match = re.search(r"(\w+\s+\d{1,2},\s+\d{4})", header)
-            if date_match:
-                try:
-                    col_date = datetime.strptime(date_match.group(1), "%B %d, %Y")
-                    col_candidates.append((idx, col_date))
-                except Exception:
-                    pass
-            # Look for period
-            period_match = re.search(r"(three|six|nine|twelve)[ -]?months", header.lower())
-            if period_match:
-                period_map = {"three": 3, "six": 6, "nine": 9, "twelve": 12}
-                period = period_map[period_match.group(1)]
-                col_candidates.append((idx, period))
-        # Use most recent date or highest period, else fallback to 1 (first data col)
-        if col_candidates:
-            # Prefer latest date, else largest period
-            if all(isinstance(x[1], datetime) for x in col_candidates):
-                most_recent_col_idx = max(col_candidates, key=lambda x: x[1])[0]
-            else:
-                most_recent_col_idx = max(col_candidates, key=lambda x: x[1])[0]
+    # Find the period (look for period end date string)
+    text = soup.get_text(separator="\n")
+    period_match = re.search(r"(For the (three|six|nine|twelve)[- ]month[s]? ended\s+([A-Za-z]+\s+\d{1,2},\s+\d{4}))", text, re.IGNORECASE)
+    if period_match:
+        period_str = period_match.group(1)
+        months_map = {"three": 3, "six": 6, "nine": 9, "twelve": 12}
+        for k, v in months_map.items():
+            if k in period_match.group(2).lower():
+                period_months = v
+                break
         else:
-            most_recent_col_idx = 1  # Default: first data column
+            period_months = None
+    else:
+        period_str = None
+        period_months = None
 
-        # Scan rows for cash and burn
-        for row in rows[1:]:
-            cells = row.find_all(["td", "th"])
-            label = cells[0].get_text(strip=True).lower()
-            # Cash
-            if ("cash" == label or "cash and cash equivalents" in label) and cash_value is None:
-                idx = min(most_recent_col_idx, len(cells)-1)
-                cash_value = clean_numeric(cells[idx].get_text(strip=True))
-                cash_col_idx = idx
-                cash_period = find_period_in_headers(headers)
-                logger.info(f"Table: found cash={cash_value} at col {cash_col_idx}")
-            # Burn
-            if "net cash used in operating activities" in label and burn_value is None:
-                idx = min(most_recent_col_idx, len(cells)-1)
-                burn_value = clean_numeric(cells[idx].get_text(strip=True))
-                burn_col_idx = idx
-                burn_period = find_period_in_headers(headers)
-                logger.info(f"Table: found burn={burn_value} at col {burn_col_idx}")
+    # Find cash/cash equivalents
+    cash_val = None
+    cash_rows = soup.find_all(string=re.compile(r"cash and cash equivalents", re.I))
+    for row in cash_rows:
+        # try to grab a nearby $ value
+        parent = row.find_parent(["tr", "td", "th"])
+        if parent:
+            val_match = re.search(r"\$?[\(\-]?\d[\d,]*\.?\d*", parent.get_text())
+            if val_match:
+                cash_val = int(val_match.group().replace("$", "").replace(",", "").replace("(", "-").replace(")", ""))
+                break
 
-    # --- Fallback to Plain Text if Needed ---
-    if cash_value is None or burn_value is None:
-        text = soup.get_text(separator=" ", strip=True)
-        if cash_value is None:
-            cash_patterns = [r"cash and cash equivalents", r"\bcash\b"]
-            cash_value, cash_period = extract_value_from_plaintext(text, cash_patterns)
-        if burn_value is None:
-            burn_patterns = [r"net cash used in operating activities"]
-            burn_value, burn_period = extract_value_from_plaintext(text, burn_patterns)
+    # Find net cash used in operating activities (from cash flow statement)
+    net_cash_used = None
+    op_cash_rows = soup.find_all(string=re.compile(r"net cash used in operating activities", re.I))
+    for row in op_cash_rows:
+        parent = row.find_parent(["tr", "td", "th"])
+        if parent:
+            val_match = re.search(r"\$?[\(\-]?\d[\d,]*\.?\d*", parent.get_text())
+            if val_match:
+                net_cash_used = int(val_match.group().replace("$", "").replace(",", "").replace("(", "-").replace(")", ""))
+                break
 
-    # --- Period Selection Logic ---
-    # Prefer burn_period, else cash_period, else fallback to 3 months
-    period_months = burn_period or cash_period or 3
+    return period_str, period_months, cash_val, net_cash_used
 
-    # --- Final Calculations ---
-    monthly_burn = abs(burn_value) / period_months if burn_value is not None and period_months else None
-    runway = cash_value / monthly_burn if cash_value is not None and monthly_burn else None
 
-    return {
-        "cash": cash_value,
-        "monthly_burn": monthly_burn,
-        "runway": runway,
-        "period_months": period_months,
-        "burn_total": burn_value
-    }
+def calculate_burn_and_runway(cash, net_cash_used, period_months):
+    if not (cash and net_cash_used and period_months):
+        return None, None
+    # net_cash_used is negative (cash outflow), so take its absolute and divide by period
+    burn_rate = abs(net_cash_used) / period_months
+    runway = cash / burn_rate if burn_rate else None
+    return round(burn_rate, 2), round(runway, 2) if runway else None
 
-def download_and_extract_cash_runway(ticker, filing_type="10-Q"):
+
+def get_cash_runway_for_ticker(ticker):
     try:
         cik = get_cik_from_ticker(ticker)
-        st.write("Attempting download...")
-        dl.get(filing_type, cik)
-        st.write("Download attempted for ICCT.")
-    except Exception as ex:
-        logger.warning(f"Download error for {ticker}: {ex}")
-        st.error(f"Download exception: {e}")
-        return None
+        filing = get_latest_filing(cik)
+        html = fetch_filing_html(cik, filing["accession"], filing["file_name"])
+        period_str, period_months, cash, net_cash_used = extract_cash_and_burn(html)
+        burn_rate, runway = calculate_burn_and_runway(cash, net_cash_used, period_months)
+        return {
+            "period_string": period_str,
+            "period_months": period_months,
+            "cash": cash,
+            "net_cash_used": net_cash_used,
+            "burn_rate": burn_rate,
+            "runway_months": runway,
+            "cik": cik,
+            "accession": filing["accession"],
+            "file_name": filing["file_name"],
+            "form": filing["form"]
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
-    # Always use the CIK folder, not the ticker!
-    filings_base_dir = os.path.join(os.getcwd(), "sec-edgar-filings", str(int(cik)), filing_type.replace("-", ""))
-    if not os.path.exists(filings_base_dir):
-        logger.warning(f"No filings dir for {ticker} (looked for {filings_base_dir})")
-        st.warning(f"No {filing_type} filings were found for {ticker}. (Checked {filings_base_dir})")
-        return None
-
-    subdirs = [
-        os.path.join(filings_base_dir, d)
-        for d in os.listdir(filings_base_dir)
-        if os.path.isdir(os.path.join(filings_base_dir, d)) and d.isdigit()
-    ]
-    if not subdirs:
-        logger.warning(f"No filing subdirs for {ticker} in {filings_base_dir}")
-        st.warning(f"No accession subfolders found for {ticker} in {filings_base_dir}")
-        return None
-
-    latest_subdir = max(subdirs, key=os.path.getmtime)
-    html_files = [
-        f for f in os.listdir(latest_subdir)
-        if f.lower().endswith(".htm") or f.lower().endswith(".html")
-    ]
-    txt_files = [f for f in os.listdir(latest_subdir) if f.lower().endswith(".txt")]
-
-    if html_files:
-        filename = html_files[0]
-    elif txt_files:
-        filename = txt_files[0]
-    else:
-        logger.warning(f"No HTML or TXT files found for {ticker} in {latest_subdir}")
-        st.warning(f"No HTML or TXT files found for {ticker} in {latest_subdir}")
-        return None
-
-    with open(os.path.join(latest_subdir, filename), "r", encoding="utf-8", errors="ignore") as f:
-        html = f.read()
-    return extract_cash_runway_from_html(html)
 
 # --- Module 3: ATM Offering Capacity ---
 def get_atm_offering(cik, lookback=10):
