@@ -15,13 +15,9 @@ from sec_edgar_downloader import Downloader
 from functools import lru_cache
  
 # -------------------- Config --------------------
-SEC_TICKER_CIK_URL = "https://www.sec.gov/include/ticker.txt"
-SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
-SEC_ARCHIVES_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession_nodash}/{file_name}"
 USER_AGENT = {"User-Agent": "DilutionAnalyzerBot/1.0 (ASHLEYMCGAVERN@YAHOO.COM)"}
 
 # --- Setup ---
-dl = Downloader(email_address="ashleymcgavern@yahoo.com", company_name="Dilution Analyzer")
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -49,24 +45,14 @@ def fetch_sec_json(cik, headers=None):
 # -------------------- Utility: Improved CIK Lookup --------------------
 @lru_cache(maxsize=100)
 def get_cik_from_ticker(ticker):
-    """Fetch CIK from SEC API with retry mechanism."""
-    url = "https://www.sec.gov/files/company_tickers.json"
-    headers = USER_AGENT
-    
-    for attempt in range(3):  # ✅ Retries up to 3 times
-        try:
-            res = requests.get(url, headers=USER_AGENT)
-            if res.status_code == 200 and res.text.strip():
-                data = res.json()
-                for item in data.values():
-                    if item['ticker'].upper() == ticker.upper():
-                        return str(item['cik_str']).zfill(10)
-            logger.warning(f"Attempt {attempt + 1}: SEC API returned status {res.status_code}")
-        except Exception as e:
-            logger.error(f"Error fetching CIK for {ticker}: {e}")
-        time.sleep(2)  # ✅ Wait before retrying
-    return None  # ✅ Returns None instead of crashing
-
+    resp = requests.get("https://www.sec.gov/include/ticker.txt", headers=USER_AGENT)
+    resp.raise_for_status()
+    mapping = dict(line.split('\t') for line in resp.text.strip().split('\n'))
+    cik = mapping.get(ticker.lower())
+    if cik:
+        return cik.zfill(10)
+    raise ValueError(f"CIK not found for ticker: {ticker}")
+ 
 # -------------------- Module 1: Market Cap --------------------
 def get_market_cap(ticker):
     try:
@@ -117,33 +103,50 @@ def _parse_market_cap_str(market_cap_str):
 
 # -------------------- Module 2: Cash Runway --------------------
 
-def get_latest_filing(cik, preferred_forms=("10-Q", "10-K")):
-    url = SEC_SUBMISSIONS_URL.format(cik=str(cik).zfill(10))
+def get_latest_filing_json(cik, form_types=("10-Q", "10-K")):
+    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
     resp = requests.get(url, headers=USER_AGENT)
     resp.raise_for_status()
     data = resp.json()
+    # Try both recent and old filings
     filings = data.get("filings", {}).get("recent", {})
-
-    forms = filings.get("form", [])
-    accessions = filings.get("accessionNumber", [])
-    docs = filings.get("primaryDocument", [])
-    periods = filings.get("periodOfReport", [])
-
-    for form in preferred_forms:
-        for i, f in enumerate(forms):
-            if f == form:
-                # Check if all required lists are long enough
-                if i < len(accessions) and i < len(docs) and i < len(periods):
-                    accession = accessions[i].replace("-", "")
-                    file_name = docs[i]
-                    period = periods[i]
+    for i, form in enumerate(filings.get("form", [])):
+        if form in form_types:
+            try:
+                accession = filings["accessionNumber"][i].replace("-", "")
+                file_name = filings["primaryDocument"][i]
+                period = filings.get("periodOfReport", [None])[i]
+                return {
+                    "form": form,
+                    "accession": accession,
+                    "file_name": file_name,
+                    "period": period,
+                    "source": "recent"
+                }
+            except IndexError:
+                continue
+    # Try "files" for historical filings
+    for f in data.get("filings", {}).get("files", []):
+        f_url = "https://data.sec.gov" + f["name"]
+        f_resp = requests.get(f_url, headers=USER_AGENT)
+        f_resp.raise_for_status()
+        f_data = f_resp.json()
+        for i, form in enumerate(f_data.get("form", [])):
+            if form in form_types:
+                try:
+                    accession = f_data["accessionNumber"][i].replace("-", "")
+                    file_name = f_data["primaryDocument"][i]
+                    period = f_data.get("periodOfReport", [None])[i]
                     return {
                         "form": form,
                         "accession": accession,
                         "file_name": file_name,
-                        "period": period
+                        "period": period,
+                        "source": "historical"
                     }
-    raise ValueError("No recent 10-Q or 10-K filing found for this CIK.")
+                except IndexError:
+                    continue
+    raise ValueError("No recent 10-Q or 10-K filing found for this CIK (checked all feeds).")
 
 
 def fetch_filing_html(cik, accession, file_name):
