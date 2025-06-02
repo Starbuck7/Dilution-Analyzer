@@ -675,7 +675,7 @@ if ticker:
 
         # Module 2: Cash Runway
         st.header("Module 2: Cash Runway")
-    with st.spinner("Analyzing cash runway...")
+    with st.spinner("Analyzing cash runway..."):
         result = get_cash_runway_for_ticker(ticker)
     if "error" in result:
         st.error(f"Error: {result['error']}")
