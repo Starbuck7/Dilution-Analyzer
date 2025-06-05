@@ -148,14 +148,14 @@ def get_latest_10q_10k(cik):
                     accession = filings["accessionNumber"][i].replace("-", "")
                     file_name = filings["primaryDocument"][i]
                     period = filings.get("periodOfReport", [None])[i]
-                return {
-                    "form": form,
-                    "accession": accession,
-                    "file_name": file_name,
-                    "period": period,
-                    "source": "recent"
-                }
-                except IndexError:
+                    return {
+                        "form": form,
+                        "accession": accession,
+                        "file_name": file_name,
+                        "period": period,
+                        "source": "recent"
+                    }
+               except IndexError:
                     continue
     # Try "files" for historical filings
     for f in data.get("filings", {}).get("files", []):
