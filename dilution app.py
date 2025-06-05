@@ -42,6 +42,38 @@ def fetch_sec_json(cik, headers=None):
     return None
 
 
+def scrape_sec_filings_html(cik, forms=None), max_results=10):
+    """
+    Scrape the SEC EDGAR browse HTML page for ALL filings for a given CIK.
+    Returns a list of dicts with form, accession number, doc link, and filing date.
+    """
+    cik = str(cik).lstrip('0')  # SEC wants no leading zeros for HTML query
+    url = f"https://www.sec.gov/edgar/browse/?CIK={cik}&owner=exclude"
+    resp = requests.get(url, headers=USER_AGENT)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+    filings = []
+    for row in soup.select('table.table tbody tr'):
+        cols = row.find_all('td')
+        if len(cols) < 5:
+            continue
+        form = cols[0].text.strip()
+        if form not in forms:
+            continue
+        accession = cols[2].text.strip()
+        date_filed = cols[3].text.strip()
+        details_link = cols[1].find('a')
+        doc_link = "https://www.sec.gov" + details_link['href'] if details_link else None
+        filings.append({
+            "form": form,
+            "accession": accession,
+            "date_filed": date_filed,
+            "doc_link": doc_link,
+        })
+        if len(filings) >= max_results:
+            break
+    return filings
+
 # -------------------- Utility: Improved CIK Lookup --------------------
 @lru_cache(maxsize=100)
 def get_cik_from_ticker(ticker):
@@ -103,15 +135,15 @@ def _parse_market_cap_str(market_cap_str):
 
 # -------------------- Module 2: Cash Runway --------------------
 
-def get_latest_filing(cik, form_types=("10-Q", "10-K")):
-    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+def get_latest_10q_10k(cik):
+    # First try JSON feed
+    url = f"https://data.sec.gov/submissions/CIK{str(cik).zfill(10)}.json"
     resp = requests.get(url, headers=USER_AGENT)
-    resp.raise_for_status()
-    data = resp.json()
-    # Try both recent and old filings
-    filings = data.get("filings", {}).get("recent", {})
-    for i, form in enumerate(filings.get("form", [])):
-        if form in form_types:
+    if resp.status_code == 200:
+        data = resp.json()
+        filings = data.get("filings", {}).get("recent", {})
+        for i, form in enumerate(filings.get("form", [])):
+            if form in ("10-Q", "10-K"):
             try:
                 accession = filings["accessionNumber"][i].replace("-", "")
                 file_name = filings["primaryDocument"][i]
@@ -146,7 +178,10 @@ def get_latest_filing(cik, form_types=("10-Q", "10-K")):
                     }
                 except IndexError:
                     continue
-    raise ValueError("No recent 10-Q or 10-K filing found for this CIK (checked all feeds).")
+    html_results = scrape_sec_filings_html(cik)
+    if not html_results:
+        raise ValueError("No 10-Q or 10-K filings found in JSON or HTML.")
+    return html_results[0]
 
 
 def fetch_filing_html(cik, accession, file_name):
@@ -155,12 +190,6 @@ def fetch_filing_html(cik, accession, file_name):
     resp.raise_for_status()
     return resp.text
  
-print("CIK used:", cik)
-print("SEC JSON URL:", url)
-print("Forms found:", forms)
-print("Accessions found:", accessions)
-print("Docs found:", docs)
-
 def extract_cash_and_burn(html):
     soup = BeautifulSoup(html, "lxml")
 
@@ -283,8 +312,11 @@ def get_atm_offering(cik, lookback=10):
         if total_atm_usd is not None:
             remaining = max(total_atm_usd - sold_usd, 0)
             return remaining, url  # return the most recent ATM-related URL
-        else:
-            return None, None
+            
+        html_results = scrape_sec_filings_html(cik)
+        if not html_results:
+            raise ValueError("No S-1, S-3 or 8-K filings found in JSON or HTML.")
+        return html_results[0] 
 
     except Exception as e:
         logger.error(f"Error in get_atm_offering: {e}")
@@ -321,7 +353,11 @@ def get_authorized_shares(cik):
                 match = re.search(pattern, text)
                 if match:
                     return int(match.group(1))
-        return None
+        html_results = scrape_sec_filings_html(cik)
+        if not html_results:
+            raise ValueError("No filings found in JSON or HTML.")
+        return html_results[0]
+    
     except Exception as e:
         print(f"Error in get_authorized_shares: {e}")
         return None
@@ -357,7 +393,10 @@ def get_outstanding_shares(cik):
                 match = re.search(pattern, text)
                 if match:
                     return int(match.group(1))
-        return None
+        html_results = scrape_sec_filings_html(cik)
+        if not html_results:
+            raise ValueError("No filings found in JSON or HTML.")
+        return html_results[0]
     except Exception as e:
         print(f"Error in get_outstanding_shares: {e}")
         return None
@@ -387,7 +426,10 @@ def get_public_float(cik):
                     elif unit == "million":
                         amount *= 1_000_000
                     return amount
-        return None
+        html_results = scrape_sec_filings_html(cik)
+        if not html_results:
+            raise ValueError("No filings found in JSON or HTML.")
+        return html_results[0]
     except Exception as e:
         logger.error(f"Error getting public float: {e}")
         return None
@@ -430,6 +472,10 @@ def get_convertibles_and_warrants_with_amounts(cik):
                 if result:
                     results.append((result, html_url))
         return results  # List of (dict, url)
+        results = scrape_sec_filings_html(cik, forms=form_types)
+        if not results:
+            raise ValueError(f"No {', '.join(form_types)} filings found via JSON or HTML.")
+        return results[0]  # Most recent filing of specified type(s)
     except Exception as e:
         print(f"Error in get_convertibles_and_warrants_with_amounts: {e}")
         return []
