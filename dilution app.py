@@ -42,7 +42,7 @@ def fetch_sec_json(cik, headers=None):
     return None
 
 
-def scrape_sec_filings_html(cik, forms=None), max_results=10):
+def scrape_sec_filings_html(cik, forms=None, max_results=10):
     """
     Scrape the SEC EDGAR browse HTML page for ALL filings for a given CIK.
     Returns a list of dicts with form, accession number, doc link, and filing date.
