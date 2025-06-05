@@ -144,10 +144,10 @@ def get_latest_10q_10k(cik):
         filings = data.get("filings", {}).get("recent", {})
         for i, form in enumerate(filings.get("form", [])):
             if form in ("10-Q", "10-K"):
-            try:
-                accession = filings["accessionNumber"][i].replace("-", "")
-                file_name = filings["primaryDocument"][i]
-                period = filings.get("periodOfReport", [None])[i]
+                try:
+                    accession = filings["accessionNumber"][i].replace("-", "")
+                    file_name = filings["primaryDocument"][i]
+                    period = filings.get("periodOfReport", [None])[i]
                 return {
                     "form": form,
                     "accession": accession,
@@ -155,8 +155,8 @@ def get_latest_10q_10k(cik):
                     "period": period,
                     "source": "recent"
                 }
-            except IndexError:
-                continue
+                except IndexError:
+                    continue
     # Try "files" for historical filings
     for f in data.get("filings", {}).get("files", []):
         f_url = "https://data.sec.gov" + f["name"]
