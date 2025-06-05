@@ -154,7 +154,12 @@ def fetch_filing_html(cik, accession, file_name):
     resp = requests.get(url, headers=USER_AGENT)
     resp.raise_for_status()
     return resp.text
-
+ 
+print("CIK used:", cik)
+print("SEC JSON URL:", url)
+print("Forms found:", forms)
+print("Accessions found:", accessions)
+print("Docs found:", docs)
 
 def extract_cash_and_burn(html):
     soup = BeautifulSoup(html, "lxml")
