@@ -135,7 +135,7 @@ def _parse_market_cap_str(market_cap_str):
 
 # -------------------- Module 2: Cash Runway --------------------
 
-def get_latest_10q_10k(cik):
+def get_latest_filing(cik, form_types=("10-Q", "10-K")):
     # First try JSON feed
     url = f"https://data.sec.gov/submissions/CIK{str(cik).zfill(10)}.json"
     resp = requests.get(url, headers=USER_AGENT)
@@ -143,7 +143,7 @@ def get_latest_10q_10k(cik):
         data = resp.json()
         filings = data.get("filings", {}).get("recent", {})
         for i, form in enumerate(filings.get("form", [])):
-            if form in ("10-Q", "10-K"):
+            if form in form_types:
                 try:
                     accession = filings["accessionNumber"][i].replace("-", "")
                     file_name = filings["primaryDocument"][i]
@@ -178,9 +178,10 @@ def get_latest_10q_10k(cik):
                     }
                 except IndexError:
                     continue
-    html_results = scrape_sec_filings_html(cik, forms=("10-Q", "10-K"))
+    # Fallback to HTML scraping
+    html_results = scrape_sec_filings_html(cik, forms=form_types)
     if not html_results:
-        raise ValueError("No 10-Q or 10-K filings found in JSON or HTML.")
+        raise ValueError(f"No {', '.join(form_types)} filings found in JSON or HTML.")
     return html_results[0]
 
 
@@ -247,7 +248,7 @@ def calculate_burn_and_runway(cash, net_cash_used, period_months):
 def get_cash_runway_for_ticker(ticker):
     try:
         cik = get_cik_from_ticker(ticker)
-        filing = get_latest_filing(cik)
+        filing = get_latest_filing(cik, form_types=("10-Q", "10-K"))
         html = fetch_filing_html(cik, filing["accession"], filing["file_name"])
         period_str, period_months, cash, net_cash_used = extract_cash_and_burn(html)
         burn_rate, runway = calculate_burn_and_runway(cash, net_cash_used, period_months)
