@@ -822,7 +822,7 @@ if ticker:
         float_val = get_public_float(ticker)
         authorized = get_authorized_shares(cik)
         outstanding = get_outstanding_shares(cik)
-        offering_data = estimate_offering_ability(cik)
+        offering_data = estimate_offering_ability(cik, ticker)
         st.subheader("4. Offering Ability")
         for k, v in offering_data.items():
             try:
