@@ -230,49 +230,64 @@ def fetch_filing_html(cik, accession, file_name):
 def extract_cash_and_burn(html):
     soup = BeautifulSoup(html, "lxml")
 
-    # Find the period (look for period end date string)
-    text = soup.get_text(separator="\n")
-    period_match = re.search(r"(For the (three|six|nine|twelve)[- ]month[s]? ended\s+([A-Za-z]+\s+\d{1,2},\s+\d{4}))", text, re.IGNORECASE)
-    if period_match:
-        period_str = period_match.group(1)
-        months_map = {"three": 3, "six": 6, "nine": 9, "twelve": 12}
-        for k, v in months_map.items():
-            if k in period_match.group(2).lower():
-                period_months = v
-                break
-        else:
-            period_months = None
-    else:
-        period_str = None
-        period_months = None
-    if soup is None:
+    # Defensive: soup should never be None, but just in case
+    if not soup:
         logger.error("BeautifulSoup parsing failed, no soup object.")
         return None, None, None, None
-    # Find cash/cash equivalents
-    cash_val = None
-    cash_rows = soup.find_all(string=re.compile(r"cash and cash equivalents", re.I)) if soup else []
-    for row in cash_rows:
-        # try to grab a nearby $ value
-        parent = row.find_parent(["tr", "td", "th"])
-        if parent:
-            val_match = re.search(r"\$?[\(\-]?\d[\d,]*\.?\d*", parent.get_text())
-            if val_match:
-                cash_val = int(val_match.group().replace("$", "").replace(",", "").replace("(", "-").replace(")", ""))
+
+    text = soup.get_text(separator="\n")
+
+    # --- Extract period (e.g. For the three months ended March 31, 2025) ---
+    period_str, period_months = None, None
+    period_match = re.search(
+        r"For the (three|six|nine|twelve)[- ]month[s]? ended\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})",
+        text, re.IGNORECASE)
+    if period_match:
+        period_str = period_match.group(0)
+        months_map = {"three": 3, "six": 6, "nine": 9, "twelve": 12}
+        for name, val in months_map.items():
+            if name in period_match.group(1).lower():
+                period_months = val
                 break
 
-    # Find net cash used in operating activities (from cash flow statement)
-    net_cash_used = None
-    op_cash_rows = soup.find_all(string=re.compile(r"net cash used in operating activities", re.I))
-    for row in op_cash_rows:
-        parent = row.find_parent(["tr", "td", "th"])
-        if parent:
-            val_match = re.search(r"\$?[\(\-]?\d[\d,]*\.?\d*", parent.get_text())
-            if val_match:
-                net_cash_used = int(val_match.group().replace("$", "").replace(",", "").replace("(", "-").replace(")", ""))
+    # --- Extract cash and cash equivalents ---
+    cash_val = None
+    cash_lines = [line for line in text.split("\n") if re.search(r"cash and cash equivalents", line, re.I)]
+    for line in cash_lines:
+        match = re.search(r"\$?[\(\-]?\d[\d,]*\.?\d*", line)
+        if match:
+            try:
+                cash_val = int(match.group().replace("$", "").replace(",", "").replace("(", "-").replace(")", ""))
                 break
+            except Exception:
+                continue
+
+    # --- Extract net cash used in operating activities ---
+    net_cash_used = None
+    op_lines = [line for line in text.split("\n") if re.search(r"net cash used in operating activities", line, re.I)]
+    for line in op_lines:
+        match = re.search(r"\$?[\(\-]?\d[\d,]*\.?\d*", line)
+        if match:
+            try:
+                net_cash_used = int(match.group().replace("$", "").replace(",", "").replace("(", "-").replace(")", ""))
+                break
+            except Exception:
+                continue
 
     return period_str, period_months, cash_val, net_cash_used
-
+    # After the above block, if cash_val is None, try element-based extraction:
+    if cash_val is None:
+        cash_rows = soup.find_all(string=re.compile(r"cash and cash equivalents", re.I))
+        for row in cash_rows or []:
+            parent = row.find_parent(["tr", "td", "th"]) if row else None
+            if parent:
+                val_match = re.search(r"\$?[\(\-]?\d[\d,]*\.?\d*", parent.get_text())
+                if val_match:
+                    try:
+                        cash_val = int(val_match.group().replace("$", "").replace(",", "").replace("(", "-").replace(")", ""))
+                        break
+                    except Exception:
+                        continue
 def get_cash_runway_for_ticker(ticker):
     """
     Fetches the most recent 10-Q or 10-K filing for the given ticker, extracts cash & cash equivalents,
