@@ -1,6 +1,5 @@
 import streamlit as st
 import requests
-from bs4 import BeautifulSoup
 import re
 import warnings
 import logging
@@ -11,163 +10,7 @@ import traceback
 from bs4 import XMLParsedAsHTMLWarning
 from datetime import datetime, timedelta
 from yahoo_fin import stock_info as si
-from sec_edgar_downloader import Downloader
-from functools import lru_cache
- 
-# -------------------- Config --------------------
-USER_AGENT = {"User-Agent": "DilutionAnalyzerBot/1.0 (ASHLEYMCGAVERN@YAHOO.COM)"}
 
-# --- Setup ---
-warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# --- Utility: Fetch SEC JSON ---
-def fetch_filings_html(cik, forms=None, max_results=10):
-    cik = str(cik).lstrip('0')
-    base_url = f"https://www.sec.gov/edgar/browse/?CIK={cik}&owner=exclude"
-    filings = []
-    page_url = base_url
-    session = requests.Session()
-    session.headers.update(USER_AGENT)
-    while page_url and len(filings) < max_results:
-        resp = session.get(page_url)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
-        table = soup.find('table', class_='table')
-        if not table:
-            # log or print warning here if needed
-            break
-        tbody = table.find('tbody')
-        if not tbody:
-            # log or print warning here if needed
-            break
-        for row in tbody.find_all('tr'):
-            cols = row.find_all('td')
-            if len(cols) < 5:
-                continue
-            form = cols[0].text.strip()
-            if forms and form not in forms:
-                continue
-            accession = cols[2].text.strip().replace("-", "")
-            date_filed = cols[3].text.strip()
-            details_link = cols[1].find('a')
-            doc_link = "https://www.sec.gov" + details_link['href'] if details_link else None
-            filings.append({
-                "form": form,
-                "accession": accession,
-                "date_filed": date_filed,
-                "doc_link": doc_link,
-            })
-            if len(filings) >= max_results:
-                break
-        # Pagination: look for Next link
-        next_link = soup.find('a', string='Next')
-        if next_link and next_link.get('href'):
-            page_url = "https://www.sec.gov" + next_link['href']
-        else:
-            page_url = None
-    return filings
- 
-def fetch_filings_json(cik, forms=None, max_results=10):
-    """
-    Fetch filings from SEC JSON feed if available.
-    Returns list of dicts like fetch_filings_html.
-    """
-    cik = str(cik).zfill(10)
-    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-    resp = requests.get(url, headers=USER_AGENT)
-    if resp.status_code != 200:
-        return []
-    data = resp.json()
-    filings = []
-    # Recent filings
-    recent = data.get("filings", {}).get("recent", {})
-    for i, form in enumerate(recent.get("form", [])):
-        if forms and form not in forms:
-            continue
-        try:
-            accession = recent["accessionNumber"][i].replace("-", "")
-            file_name = recent["primaryDocument"][i]
-            date_filed = recent["filingDate"][i]
-            filings.append({
-                "form": form,
-                "accession": accession,
-                "file_name": file_name,
-                "date_filed": date_filed,
-                "source": "recent"
-            })
-            if len(filings) >= max_results:
-                return filings
-        except (IndexError, KeyError):
-            continue
-    # Historical files (optional, for completeness)
-    for f in data.get("filings", {}).get("files", []):
-        f_url = "https://data.sec.gov" + f["name"]
-        try:
-            f_resp = requests.get(f_url, headers=USER_AGENT)
-            f_resp.raise_for_status()
-            f_data = f_resp.json()
-            for i, form in enumerate(f_data.get("form", [])):
-                if forms and form not in forms:
-                    continue
-                try:
-                    accession = f_data["accessionNumber"][i].replace("-", "")
-                    file_name = f_data["primaryDocument"][i]
-                    date_filed = f_data["filingDate"][i]
-                    filings.append({
-                        "form": form,
-                        "accession": accession,
-                        "file_name": file_name,
-                        "date_filed": date_filed,
-                        "source": "historical"
-                    })
-                    if len(filings) >= max_results:
-                        return filings
-                except (IndexError, KeyError):
-                    continue
-        except Exception:
-            continue
-    return filings
-
-def get_latest_filing(cik, forms=None):
-    """
-    Main function to get the latest filing for a CIK/issuer.
-    Tries HTML (robust) first, then falls back to SEC JSON.
-    Args:
-        cik (str|int): CIK or ticker
-        forms (tuple|list|None): e.g. ("10-Q", "10-K") or None for any
-    Returns:
-        Filing dict or raises ValueError
-    """
-    filings = fetch_filings_html(cik, forms=forms, max_results=1)
-    if filings:
-        return filings[0]
-    filings = fetch_filings_json(cik, forms=forms, max_results=1)
-    if filings:
-        return filings[0]
-    raise ValueError(f"No {', '.join(forms) if forms else 'filings'} found in SEC HTML or JSON for CIK {cik}.")
-
-def get_all_filings(cik, forms=None, max_results=10):
-    """
-    Get all filings up to max_results, using HTML as main, JSON as fallback.
-    """
-    filings = fetch_filings_html(cik, forms=forms, max_results=max_results)
-    if filings:
-        return filings
-    return fetch_filings_json(cik, forms=forms, max_results=max_results)
-
-# -------------------- Utility: Improved CIK Lookup --------------------
-@lru_cache(maxsize=100)
-def get_cik_from_ticker(ticker):
-    resp = requests.get("https://www.sec.gov/include/ticker.txt", headers=USER_AGENT)
-    resp.raise_for_status()
-    mapping = dict(line.split('\t') for line in resp.text.strip().split('\n'))
-    cik = mapping.get(ticker.lower())
-    if cik:
-        return cik.zfill(10)
-    raise ValueError(f"CIK not found for ticker: {ticker}")
- 
 # -------------------- Module 1: Market Cap --------------------
 def get_market_cap(ticker):
     try:
@@ -773,15 +616,13 @@ st.markdown("Analyze dilution and financial health based on SEC filings.")
 
 # Input ticker
 ticker = st.text_input("Enter a stock ticker (e.g., SYTA)", "").strip().upper()
+from sec_utils import (
+    fetch_filings_html, fetch_filings_json,
+    get_latest_filing, get_all_filings, get_cik_from_ticker
+)
 
-if ticker:
-    cik = get_cik_from_ticker(ticker)
-    if not cik:
-        st.error("CIK not found for this ticker.")
-    else:
-        st.success(f"CIK found: {cik}")
 
-     #Module 1: Market Cap
+        #Module 1: Market Cap
         market_cap = get_market_cap(ticker)
         st.subheader("1. Market Cap")
         st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
