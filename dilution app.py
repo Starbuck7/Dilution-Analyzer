@@ -377,7 +377,8 @@ def get_atm_offering(cik, lookback=10):
         for filing in filings:
             file_name = filing.get("file_name") or (filing.get("doc_link").split("/")[-1] if filing.get("doc_link") else None)
             if not file_name: continue
-            html, url = fetch_filing_html(cik, filing["accession"], file_name)
+            html = fetch_filing_html(cik, filing["accession"], file_name)
+            url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{filing['accession']}/{file_name}"
             text = BeautifulSoup(html, "lxml").get_text(separator="\n").replace(",", "")
             form = filing["form"]
 
