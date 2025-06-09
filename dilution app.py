@@ -245,10 +245,12 @@ def extract_cash_and_burn(html):
     else:
         period_str = None
         period_months = None
-
+    if soup is None:
+        logger.error("BeautifulSoup parsing failed, no soup object.")
+        return None, None, None, None
     # Find cash/cash equivalents
     cash_val = None
-    cash_rows = soup.find_all(string=re.compile(r"cash and cash equivalents", re.I))
+    cash_rows = soup.find_all(string=re.compile(r"cash and cash equivalents", re.I)) if soup else []
     for row in cash_rows:
         # try to grab a nearby $ value
         parent = row.find_parent(["tr", "td", "th"])
