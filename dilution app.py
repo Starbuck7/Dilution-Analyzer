@@ -23,56 +23,143 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- Utility: Fetch SEC JSON ---
-def fetch_sec_json(cik, headers=None):
+def fetch_filings_html(cik, forms=None, max_results=10):
     """
-    Fetches the SEC JSON data for a given CIK.
-    Returns the JSON dict if successful, otherwise None.
+    Scrape SEC EDGAR for filings matching form types, paginating as needed.
+    Args:
+        cik (str|int): CIK or ticker
+        forms (tuple|list|None): e.g. ("10-Q", "10-K") or None for any
+        max_results (int): max filings to return
+    Returns:
+        List of dicts with keys: form, accession, date_filed, doc_link
     """
-    if headers is None:
-        headers = USER_AGENT
-    url = f"https://data.sec.gov/submissions/CIK{str(cik).zfill(10)}.json"
-    try:
-        res = requests.get(url, headers=USER_AGENT)
-        if res.status_code == 200:
-            return res.json()
-        else:
-            logger.warning(f"SEC API returned status {res.status_code} for CIK {cik}")
-    except Exception as e:
-        logger.error(f"Failed to fetch SEC JSON for CIK {cik}: {e}")
-    return None
-
-
-def scrape_sec_filings_html(cik, forms=None, max_results=10):
-    """
-    Scrape the SEC EDGAR browse HTML page for ALL filings for a given CIK.
-    Returns a list of dicts with form, accession number, doc link, and filing date.
-    """
-    cik = str(cik).lstrip('0')  # SEC wants no leading zeros for HTML query
-    url = f"https://www.sec.gov/edgar/browse/?CIK={cik}&owner=exclude"
-    resp = requests.get(url, headers=USER_AGENT)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
+    cik = str(cik).lstrip('0')
+    base_url = f"https://www.sec.gov/edgar/browse/?CIK={cik}&owner=exclude"
     filings = []
-    for row in soup.select('table.table tbody tr'):
-        cols = row.find_all('td')
-        if len(cols) < 5:
-            continue
-        form = cols[0].text.strip()
-        if form not in forms:
-            continue
-        accession = cols[2].text.strip()
-        date_filed = cols[3].text.strip()
-        details_link = cols[1].find('a')
-        doc_link = "https://www.sec.gov" + details_link['href'] if details_link else None
-        filings.append({
-            "form": form,
-            "accession": accession,
-            "date_filed": date_filed,
-            "doc_link": doc_link,
-        })
-        if len(filings) >= max_results:
+    page_url = base_url
+    session = requests.Session()
+    session.headers.update(USER_AGENT)
+    while page_url and len(filings) < max_results:
+        resp = session.get(page_url)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        table = soup.find('table', class_='table')
+        if not table:
             break
+        for row in table.find('tbody').find_all('tr'):
+            cols = row.find_all('td')
+            if len(cols) < 5:
+                continue
+            form = cols[0].text.strip()
+            if forms and form not in forms:
+                continue
+            accession = cols[2].text.strip().replace("-", "")
+            date_filed = cols[3].text.strip()
+            details_link = cols[1].find('a')
+            doc_link = "https://www.sec.gov" + details_link['href'] if details_link else None
+            filings.append({
+                "form": form,
+                "accession": accession,
+                "date_filed": date_filed,
+                "doc_link": doc_link,
+            })
+            if len(filings) >= max_results:
+                break
+        # Pagination: look for Next link
+        next_link = soup.find('a', string='Next')
+        if next_link and next_link.get('href'):
+            page_url = "https://www.sec.gov" + next_link['href']
+        else:
+            page_url = None
     return filings
+
+def fetch_filings_json(cik, forms=None, max_results=10):
+    """
+    Fetch filings from SEC JSON feed if available.
+    Returns list of dicts like fetch_filings_html.
+    """
+    cik = str(cik).zfill(10)
+    url = f"https://data.sec.gov/submissions/CIK{cik}.json"
+    resp = requests.get(url, headers=USER_AGENT)
+    if resp.status_code != 200:
+        return []
+    data = resp.json()
+    filings = []
+    # Recent filings
+    recent = data.get("filings", {}).get("recent", {})
+    for i, form in enumerate(recent.get("form", [])):
+        if forms and form not in forms:
+            continue
+        try:
+            accession = recent["accessionNumber"][i].replace("-", "")
+            file_name = recent["primaryDocument"][i]
+            date_filed = recent["filingDate"][i]
+            filings.append({
+                "form": form,
+                "accession": accession,
+                "file_name": file_name,
+                "date_filed": date_filed,
+                "source": "recent"
+            })
+            if len(filings) >= max_results:
+                return filings
+        except (IndexError, KeyError):
+            continue
+    # Historical files (optional, for completeness)
+    for f in data.get("filings", {}).get("files", []):
+        f_url = "https://data.sec.gov" + f["name"]
+        try:
+            f_resp = requests.get(f_url, headers=USER_AGENT)
+            f_resp.raise_for_status()
+            f_data = f_resp.json()
+            for i, form in enumerate(f_data.get("form", [])):
+                if forms and form not in forms:
+                    continue
+                try:
+                    accession = f_data["accessionNumber"][i].replace("-", "")
+                    file_name = f_data["primaryDocument"][i]
+                    date_filed = f_data["filingDate"][i]
+                    filings.append({
+                        "form": form,
+                        "accession": accession,
+                        "file_name": file_name,
+                        "date_filed": date_filed,
+                        "source": "historical"
+                    })
+                    if len(filings) >= max_results:
+                        return filings
+                except (IndexError, KeyError):
+                    continue
+        except Exception:
+            continue
+    return filings
+
+def get_latest_filing(cik, forms=None):
+    """
+    Main function to get the latest filing for a CIK/issuer.
+    Tries HTML (robust) first, then falls back to SEC JSON.
+    Args:
+        cik (str|int): CIK or ticker
+        forms (tuple|list|None): e.g. ("10-Q", "10-K") or None for any
+    Returns:
+        Filing dict or raises ValueError
+    """
+    filings = fetch_filings_html(cik, forms=forms, max_results=1)
+    if filings:
+        return filings[0]
+    filings = fetch_filings_json(cik, forms=forms, max_results=1)
+    if filings:
+        return filings[0]
+    raise ValueError(f"No {', '.join(forms) if forms else 'filings'} found in SEC HTML or JSON for CIK {cik}.")
+
+def get_all_filings(cik, forms=None, max_results=10):
+    """
+    Get all filings up to max_results, using HTML as main, JSON as fallback.
+    """
+    filings = fetch_filings_html(cik, forms=forms, max_results=max_results)
+    if filings:
+        return filings
+    return fetch_filings_json(cik, forms=forms, max_results=max_results)
 
 # -------------------- Utility: Improved CIK Lookup --------------------
 @lru_cache(maxsize=100)
@@ -271,29 +358,23 @@ def get_cash_runway_for_ticker(ticker):
 # --- Module 3: ATM Offering Capacity ---
 def get_atm_offering(cik, lookback=10):
     try:
-        data = fetch_sec_json(cik)
-        if not data:
-            return None, None
-        filings = data.get("filings", {}).get("recent", {})
-        forms = filings.get("form", [])
-        accessions = filings.get("accessionNumber", [])
-        docs = filings.get("primaryDocument", [])
-        urls = []
-
-        for i, form in enumerate(forms):
-            if form in ["S-1", "S-3", "8-K", "424B5"] and i < lookback:
-                accession = accessions[i].replace("-", "")
-                doc = docs[i]
-                url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-                urls.append((form, url))
+        # Robust fetching of recent ATM-related filings (HTML first, JSON fallback)
+        filing_types = ("S-1", "S-3", "8-K", "424B5")
+        filings = get_all_filings(cik, forms=filing_types, max_results=lookback)
 
         total_atm_usd = None
         sold_usd = 0
+        atm_url = None
 
-        for form, url in urls:
-            html = requests.get(url, headers=USER_AGENT).text
-            text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
+        for filing in filings:
+            file_name = filing.get("file_name") or (filing.get("doc_link").split("/")[-1] if filing.get("doc_link") else None)
+            if not file_name: continue
+            html, url = fetch_filing_html(cik, filing["accession"], file_name)
+            text = BeautifulSoup(html, "lxml").get_text(separator="\n").replace(",", "")
+            form = filing["form"]
+
             if form in ["S-1", "S-3"]:
+                # Look for ATM program size
                 match = re.search(r"(?:at[-\s]the[-\s]market|ATM)[^$]{0,40}\$([\d\.]+)\s*(million|billion)?", text, re.IGNORECASE)
                 if match:
                     val = float(match.group(1))
@@ -301,7 +382,9 @@ def get_atm_offering(cik, lookback=10):
                     if unit:
                         val *= 1_000_000 if unit.lower() == "million" else 1_000_000_000
                     total_atm_usd = val
+                    atm_url = url  # Save the url where ATM found
             elif form in ["8-K", "424B5"]:
+                # Look for ATM sales
                 sold_matches = re.findall(r"under\s+the\s+ATM[^$]{0,100}\$([\d\.]+)\s*(million|billion)?", text, re.IGNORECASE)
                 for match in sold_matches:
                     val = float(match[0])
@@ -309,131 +392,172 @@ def get_atm_offering(cik, lookback=10):
                     if unit:
                         val *= 1_000_000 if unit.lower() == "million" else 1_000_000_000
                     sold_usd += val
+                    atm_url = url  # Save the most recent relevant url
 
         if total_atm_usd is not None:
             remaining = max(total_atm_usd - sold_usd, 0)
-            return remaining, url  # return the most recent ATM-related URL
-            
-        html_results = scrape_sec_filings_html(cik)
-        if not html_results:
-            raise ValueError("No S-1, S-3 or 8-K filings found in JSON or HTML.")
-        return html_results[0] 
+            return remaining, atm_url
+
+        # If not found, fallback: return None, None (or you can return the first available filing url)
+        return None, None
 
     except Exception as e:
         logger.error(f"Error in get_atm_offering: {e}")
         return None, None
 
 
-# -------------------- Module 4: Authorized vs Outstanding Shares & Float --------------------
+# -------------------- Module 4: Offering Ability - Oustanding, Authorized, Shelf Shares & Float --------------------
+def fetch_filing_html(cik, accession, file_name):
+    # CIK must be int (no leading zero), accession no dashes
+    cik = str(int(cik))
+    html_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{file_name}"
+    resp = requests.get(html_url, headers=USER_AGENT)
+    resp.raise_for_status()
+    return resp.text
+
+def extract_authorized_shares_from_html(html):
+    text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
+    patterns = [
+        r"(?i)(?:total\s+)?authorized\s+(?:number\s+of\s+)?shares[^0-9]{0,20}([0-9]{5,})",
+        r"(?i)number\s+of\s+authorized\s+shares[^0-9]{0,20}([0-9]{5,})",
+        r"(?i)authorized\s+capital\s+stock[^0-9]{0,20}([0-9]{5,})",
+        r"(?i)authorized[^0-9]{0,10}([0-9]{5,})\s+shares"
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return int(match.group(1))
+    return None
+
+def extract_outstanding_shares_from_html(html):
+    text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
+    patterns = [
+        r"(?i)(?:common\s+stock\s+)?outstanding\s+(?:shares|stock)[^0-9]{0,20}([0-9]{5,})",
+        r"(?i)shares\s+issued\s+and\s+outstanding[^0-9]{0,20}([0-9]{5,})",
+        r"(?i)common\s+shares\s+outstanding[^0-9]{0,20}([0-9]{5,})",
+        r"(?i)total\s+shares\s+outstanding[^0-9]{0,20}([0-9]{5,})",
+        r"(?i)outstanding[^0-9]{0,10}([0-9]{5,})\s+shares",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return int(match.group(1))
+    return None
+
 def get_authorized_shares(cik):
     try:
-        data = fetch_sec_json(cik)
-        if not data:
-            return None
-        filings = data.get("filings", {}).get("recent", {})
-        forms = filings.get("form", [])
-        accessions = filings.get("accessionNumber", [])
-        docs = filings.get("primaryDocument", [])
-        for i, form in enumerate(forms):
-            if form not in ["10-K", "10-Q", "DEF 14A"]:
-                continue
-            if i >= len(accessions) or i >= len(docs):
-                continue
-            accession = accessions[i].replace("-", "")
-            doc = docs[i]
-            html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-            html = requests.get(html_url, headers=USER_AGENT).text
-            text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
-            patterns = [
-                r"(?i)(?:total\s+)?authorized\s+(?:number\s+of\s+)?shares[^0-9]{0,20}([0-9]{5,})",
-                r"(?i)number\s+of\s+authorized\s+shares[^0-9]{0,20}([0-9]{5,})",
-                r"(?i)authorized\s+capital\s+stock[^0-9]{0,20}([0-9]{5,})",
-                r"(?i)authorized[^0-9]{0,10}([0-9]{5,})\s+shares"
-            ]
-            for pattern in patterns:
-                match = re.search(pattern, text)
-                if match:
-                    return int(match.group(1))
-        html_results = scrape_sec_filings_html(cik)
-        if not html_results:
-            raise ValueError("No filings found in JSON or HTML.")
-        return html_results[0]
-    
+        # Try HTML-first, fallback to JSON
+        filing = get_latest_filing(cik, forms=("10-K", "10-Q", "DEF 14A"))
+        html = fetch_filing_html(cik, filing["accession"], filing.get("file_name") or filing.get("doc_link").split("/")[-1])
+        val = extract_authorized_shares_from_html(html)
+        if val:
+            return val
+        # If not found, try additional filings (e.g., previous filings)
+        filings = get_all_filings(cik, forms=("10-K", "10-Q", "DEF 14A"), max_results=5)
+        for filing in filings[1:]:
+            html = fetch_filing_html(cik, filing["accession"], filing.get("file_name") or filing.get("doc_link").split("/")[-1])
+            val = extract_authorized_shares_from_html(html)
+            if val:
+                return val
+        return None
     except Exception as e:
         print(f"Error in get_authorized_shares: {e}")
         return None
 
 def get_outstanding_shares(cik):
     try:
-        data = fetch_sec_json(cik)
-        if not data:
-            return None
-        filings = data.get("filings", {}).get("recent", {})
-        forms = filings.get("form", [])
-        accessions = filings.get("accessionNumber", [])
-        docs = filings.get("primaryDocument", [])
-        dates = filings.get("filingDate", [])
-        for i, form in enumerate(forms):
-            if form not in ["10-Q", "10-K", "DEF 14A"]:
-                continue
-            if i >= len(accessions) or i >= len(docs):
-                continue
-            accession = accessions[i].replace("-", "")
-            doc = docs[i]
-            html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-            html = requests.get(html_url, headers=USER_AGENT).text
-            text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
-            patterns = [
-                r"(?i)(?:common\s+stock\s+)?outstanding\s+(?:shares|stock)[^0-9]{0,20}([0-9]{5,})",
-                r"(?i)shares\s+issued\s+and\s+outstanding[^0-9]{0,20}([0-9]{5,})",
-                r"(?i)common\s+shares\s+outstanding[^0-9]{0,20}([0-9]{5,})",
-                r"(?i)total\s+shares\s+outstanding[^0-9]{0,20}([0-9]{5,})",
-                r"(?i)outstanding[^0-9]{0,10}([0-9]{5,})\s+shares",
-            ]
-            for pattern in patterns:
-                match = re.search(pattern, text)
-                if match:
-                    return int(match.group(1))
-        html_results = scrape_sec_filings_html(cik)
-        if not html_results:
-            raise ValueError("No filings found in JSON or HTML.")
-        return html_results[0]
+        filing = get_latest_filing(cik, forms=("10-K", "10-Q", "DEF 14A"))
+        html = fetch_filing_html(cik, filing["accession"], filing.get("file_name") or filing.get("doc_link").split("/")[-1])
+        val = extract_outstanding_shares_from_html(html)
+        if val:
+            return val
+        # If not found, try additional filings
+        filings = get_all_filings(cik, forms=("10-K", "10-Q", "DEF 14A"), max_results=5)
+        for filing in filings[1:]:
+            html = fetch_filing_html(cik, filing["accession"], filing.get("file_name") or filing.get("doc_link").split("/")[-1])
+            val = extract_outstanding_shares_from_html(html)
+            if val:
+                return val
+        return None
     except Exception as e:
         print(f"Error in get_outstanding_shares: {e}")
         return None
 
-def get_public_float(cik):
+def get_shelf_registered_shares(cik, num_filings=10):
     try:
-        data = fetch_sec_json(cik)
-        if not data:
-            return None
-        filings = data.get("filings", {}).get("recent", {})
-        forms = filings.get("form", [])
-        accessions = filings.get("accessionNumber", [])
-        docs = filings.get("primaryDocument", [])
-        for i, form in enumerate(forms):
-            if form == "10-K":  # Public float is often in 10-K
-                accession = accessions[i].replace("-", "")
-                doc = docs[i]
-                html_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{doc}"
-                html = requests.get(html_url, headers=USER_AGENT).text
-                text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
-                match = re.search(r"public float.*?\$?([0-9.]+)\s?(million|billion)?", text, re.IGNORECASE)
-                if match:
-                    amount = float(match.group(1))
-                    unit = match.group(2)
-                    if unit == "billion":
-                        amount *= 1_000_000_000
-                    elif unit == "million":
-                        amount *= 1_000_000
-                    return amount
-        html_results = scrape_sec_filings_html(cik)
-        if not html_results:
-            raise ValueError("No filings found in JSON or HTML.")
-        return html_results[0]
-    except Exception as e:
-        logger.error(f"Error getting public float: {e}")
+        # Use HTML-first, JSON-fallback to get recent shelf registration filings
+        filing_types = ("S-3", "S-1", "424B3")
+        filings = get_all_filings(cik, forms=filing_types, max_results=num_filings)
+        all_text = ""
+        for filing in filings:
+            file_name = filing.get("file_name") or filing.get("doc_link").split("/")[-1]
+            html = fetch_filing_html(cik, filing["accession"], file_name)
+            text = BeautifulSoup(html, "lxml").get_text(separator="\n")
+            all_text += "\n" + text
+
+        # Dollar-based shelf matches
+        dollar_matches = re.findall(
+            r"offer(?:ing)?(?: and sell)? (?:up to|of up to)?\s*\$?([\d,.]+)\s*(million|billion)?",
+            all_text, re.IGNORECASE)
+        amounts = []
+        for num_str, magnitude in dollar_matches:
+            try:
+                num = float(num_str.replace(",", "").strip())
+                if magnitude:
+                    if magnitude.lower() == "million":
+                        num *= 1_000_000
+                    elif magnitude.lower() == "billion":
+                        num *= 1_000_000_000
+                amounts.append(num)
+            except Exception:
+                continue
+
+        # Share-based shelf matches
+        share_matches = re.findall(
+            r"offer(?:ing)?(?: and sell)? (?:up to|of up to)?\s*([\d,.]+)\s*(shares|common stock)?",
+            all_text, re.IGNORECASE)
+        for num_str, _ in share_matches:
+            try:
+                num = float(num_str.replace(",", "").strip())
+                amounts.append(num)
+            except Exception:
+                continue
+
+        if amounts:
+            return max(amounts)
         return None
+    except Exception as e:
+        print(f"Error extracting shelf registered shares: {e}")
+        return None
+
+def get_public_float(ticker):
+    stock = yf.Ticker(ticker)
+    info = stock.info
+    public_float = info.get('floatShares')
+    if public_float is not None:
+        return public_float
+    raise ValueError("Public float not found for this ticker.")
+
+def estimate_offering_ability(cik):
+    try:
+        authorized = get_authorized_shares(cik)
+        outstanding = get_outstanding_shares(cik)
+        available_shares = max(authorized - outstanding, 0) if authorized and outstanding else None
+        atm_usd, _ = get_atm_offering(cik)
+        shelf_usd = get_shelf_registered_shares(cik)
+        float_shares = get_public_float(ticker)
+        values = {
+            "Available Shares": available_shares,
+            "ATM Capacity": atm_usd,
+            "Shelf Registered Shares": shelf_usd,
+            "Public Float": float_shares
+        }
+        if not any(v for v in values.values() if v):
+            return {"Status": "Unable to determine offering ability (missing data)"}
+        return values
+    except Exception as e:
+        print(f"Error estimating offering ability: {e}")
+        return {"Status": f"Error: {e}"}
        
 # -------------------- Module 5: Convertibles and Warrants --------------------
 def get_convertibles_and_warrants_with_amounts(cik):
@@ -540,70 +664,6 @@ def get_historical_capital_raises(cik):
     except Exception as e:
         print(f"Error in get_historical_capital_raises: {e}")
         return None
-
-
-# -------------------- Module 7: Offering Ability --------------------
-def get_shelf_registered_shares(cik, num_filings=10):
-    try:
-        cik_str = str(cik).zfill(10)
-        filing_types = ['S-3', 'S-1', '424B3']
-        all_text = ""
-        for form_type in filing_types:
-            dl.get(form_type, cik_str)
-            path = f"/tmp/sec/sec-edgar-filings/{cik_str}/{form_type.lower()}"
-            for subdir, _, files in os.walk(path):
-                for file in files:
-                    if file.endswith(".txt"):
-                        with open(os.path.join(subdir, file), "r", encoding="utf-8", errors="ignore") as f:
-                            text = f.read()
-                            all_text += "\n" + text
-        dollar_matches = re.findall(
-            r"offer(?:ing)?(?: and sell)? (?:up to|of up to)?\s*\$([\d,.]+)\s*(million|billion)?",
-            all_text, re.IGNORECASE)
-        amounts = []
-        for match in dollar_matches:
-            num_str, magnitude = match
-            num = float(num_str.replace(",", "").strip())
-            if magnitude:
-                if magnitude.lower() == "million":
-                    num *= 1_000_000
-                elif magnitude.lower() == "billion":
-                    num *= 1_000_000_000
-            amounts.append(num)
-        share_matches = re.findall(
-            r"offer(?:ing)?(?: and sell)? (?:up to|of up to)?\s*([\d,.]+)\s*(shares|common stock)?",
-            all_text, re.IGNORECASE)
-        for match in share_matches:
-            num_str, _ = match
-            num = float(num_str.replace(",", "").strip())
-            amounts.append(num * 1.00)
-        if amounts:
-            return max(amounts)
-        return None
-    except Exception as e:
-        print(f"Error extracting shelf registered shares: {e}")
-        return None
-
-def estimate_offering_ability(cik):
-    try:
-        authorized = get_authorized_shares(cik)
-        outstanding = get_outstanding_shares(cik)
-        available_shares = max(authorized - outstanding, 0) if authorized and outstanding else None
-        atm_usd, _ = get_atm_offering(cik)
-        shelf_usd = get_shelf_registered_shares(cik)
-        float_shares = get_public_float(cik)
-        values = {
-            "Available Shares": available_shares,
-            "ATM Capacity": atm_usd,
-            "Shelf Registered Shares": shelf_usd,
-            "Public Float": float_shares
-        }
-        if not any(v for v in values.values() if v):
-            return {"Status": "Unable to determine offering ability (missing data)"}
-        return values
-    except Exception as e:
-        print(f"Error estimating offering ability: {e}")
-        return {"Status": f"Error: {e}"}
 
 
 # -------------------- Module 8: Dilution Pressure Score --------------------
@@ -750,11 +810,20 @@ if ticker:
         else:
             st.write("No ATM filing found.")
 
-        #Module 4: Authorized vs Outstanding Shares & Float
+        #Module 4: Offering Ability- Authorized vs Outstanding Shares & Float
         float_val = get_public_float(cik)
         authorized = get_authorized_shares(cik)
         outstanding = get_outstanding_shares(cik)
-        st.subheader("4. Authorized vs Outstanding Shares")
+		offering_data = estimate_offering_ability(cik)
+        st.subheader("4. Offering Ability")
+        for k, v in offering_data.items():
+            try:
+                if v is not None and isinstance(v, (int, float)):
+                    st.write(f"{k}: {v:,.0f}")
+                else:
+                    st.write(f"{k}: {v}")
+            except Exception as ex:
+                st.write(f"{k}: [error displaying value] ({ex})")
         st.write(f"Public Float: {float_val:,}" if float_val else "Public Float: Not found")
         st.write(f"Authorized Shares: {authorized:,}" if authorized else "Authorized Shares: Not found")
         st.write(f"Outstanding Shares: {outstanding:,}" if outstanding else "Outstanding Shares: Not found")
@@ -785,19 +854,7 @@ if ticker:
         else:
             st.write("No historical raises found.")
             
-        #Module 7: Offering Ability
-        offering_data = estimate_offering_ability(cik)
-        st.subheader("7. Offering Ability")
-        for k, v in offering_data.items():
-            try:
-                if v is not None and isinstance(v, (int, float)):
-                    st.write(f"{k}: {v:,.0f}")
-                else:
-                    st.write(f"{k}: {v}")
-            except Exception as ex:
-                st.write(f"{k}: [error displaying value] ({ex})")
-
-      # 8. Dilution Pressure Score
+       # 7. Dilution Pressure Score
         st.subheader("8. Dilution Pressure Score")
         st.caption("Combines cash runway, ATM capacity, dilution ability, and more to assess dilution risk.")
 
