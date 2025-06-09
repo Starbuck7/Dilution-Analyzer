@@ -155,7 +155,7 @@ def get_latest_10q_10k(cik):
                         "period": period,
                         "source": "recent"
                     }
-               except IndexError:
+                except IndexError:
                     continue
     # Try "files" for historical filings
     for f in data.get("filings", {}).get("files", []):
@@ -178,7 +178,7 @@ def get_latest_10q_10k(cik):
                     }
                 except IndexError:
                     continue
-    html_results = scrape_sec_filings_html(cik)
+    html_results = scrape_sec_filings_html(cik, forms=("10-Q", "10-K"))
     if not html_results:
         raise ValueError("No 10-Q or 10-K filings found in JSON or HTML.")
     return html_results[0]
