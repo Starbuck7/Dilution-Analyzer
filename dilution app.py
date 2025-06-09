@@ -819,7 +819,7 @@ if ticker:
             st.write("No ATM filing found.")
 
        # Module 4: Offering Ability- Authorized vs Outstanding Shares & Float
-        float_val = get_public_float(cik)
+        float_val = get_public_float(ticker)
         authorized = get_authorized_shares(cik)
         outstanding = get_outstanding_shares(cik)
         offering_data = estimate_offering_ability(cik)
