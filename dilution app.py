@@ -363,9 +363,9 @@ def get_cash_runway_for_ticker(ticker):
             "form": filing["form"]
         }
     except Exception as e:
-    print("Exception in get_cash_runway_for_ticker:", e)
-    traceback.print_exc()
-    return {"error": str(e)}
+        print("Exception in get_cash_runway_for_ticker:", e)
+        traceback.print_exc()
+        return {"error": str(e)}
 
 # --- Module 3: ATM Offering Capacity ---
 def get_atm_offering(cik, lookback=10):
