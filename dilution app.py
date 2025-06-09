@@ -818,7 +818,7 @@ if ticker:
         #Module 4: Offering Ability- Authorized vs Outstanding Shares & Float
         float_val = get_public_float(cik)
         authorized = get_authorized_shares(cik)
-        outstanding = get_outstanding_shares(cik)
+    	outstanding = get_outstanding_shares(cik)
 		offering_data = estimate_offering_ability(cik)
         st.subheader("4. Offering Ability")
         for k, v in offering_data.items():
