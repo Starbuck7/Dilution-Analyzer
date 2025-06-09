@@ -7,6 +7,7 @@ import logging
 import os
 import yfinance as yf
 import time
+import traceback
 from bs4 import XMLParsedAsHTMLWarning
 from datetime import datetime, timedelta
 from yahoo_fin import stock_info as si
@@ -230,14 +231,8 @@ def fetch_filing_html(cik, accession, file_name):
 def extract_cash_and_burn(html):
     soup = BeautifulSoup(html, "lxml")
 
-    # Defensive: soup should never be None, but just in case
-    if not soup:
-        logger.error("BeautifulSoup parsing failed, no soup object.")
-        return None, None, None, None
-
+    # Extract period
     text = soup.get_text(separator="\n")
-
-    # --- Extract period (e.g. For the three months ended March 31, 2025) ---
     period_str, period_months = None, None
     period_match = re.search(
         r"For the (three|six|nine|twelve)[- ]month[s]? ended\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})",
@@ -250,44 +245,38 @@ def extract_cash_and_burn(html):
                 period_months = val
                 break
 
-    # --- Extract cash and cash equivalents ---
+    # Extract cash and cash equivalents
     cash_val = None
-    cash_lines = [line for line in text.split("\n") if re.search(r"cash and cash equivalents", line, re.I)]
-    for line in cash_lines:
-        match = re.search(r"\$?[\(\-]?\d[\d,]*\.?\d*", line)
-        if match:
+    cash_rows = soup.find_all(string=re.compile(r"cash and cash equivalents", re.I))
+    for row in cash_rows:
+        parent = row.find_parent(["tr", "td", "th"]) if hasattr(row, "find_parent") else None
+        if not parent:
+            continue
+        val_match = re.search(r"\$?[\(\-]?\d[\d,]*\.?\d*", parent.get_text())
+        if val_match:
             try:
-                cash_val = int(match.group().replace("$", "").replace(",", "").replace("(", "-").replace(")", ""))
+                cash_val = int(val_match.group().replace("$", "").replace(",", "").replace("(", "-").replace(")", ""))
                 break
             except Exception:
                 continue
 
-    # --- Extract net cash used in operating activities ---
+    # Extract net cash used in operating activities
     net_cash_used = None
-    op_lines = [line for line in text.split("\n") if re.search(r"net cash used in operating activities", line, re.I)]
-    for line in op_lines:
-        match = re.search(r"\$?[\(\-]?\d[\d,]*\.?\d*", line)
-        if match:
+    op_cash_rows = soup.find_all(string=re.compile(r"net cash used in operating activities", re.I))
+    for row in op_cash_rows:
+        parent = row.find_parent(["tr", "td", "th"]) if hasattr(row, "find_parent") else None
+        if not parent:
+            continue
+        val_match = re.search(r"\$?[\(\-]?\d[\d,]*\.?\d*", parent.get_text())
+        if val_match:
             try:
-                net_cash_used = int(match.group().replace("$", "").replace(",", "").replace("(", "-").replace(")", ""))
+                net_cash_used = int(val_match.group().replace("$", "").replace(",", "").replace("(", "-").replace(")", ""))
                 break
             except Exception:
                 continue
 
     return period_str, period_months, cash_val, net_cash_used
-    # After the above block, if cash_val is None, try element-based extraction:
-    if cash_val is None:
-        cash_rows = soup.find_all(string=re.compile(r"cash and cash equivalents", re.I))
-        for row in cash_rows or []:
-            parent = row.find_parent(["tr", "td", "th"]) if row else None
-            if parent:
-                val_match = re.search(r"\$?[\(\-]?\d[\d,]*\.?\d*", parent.get_text())
-                if val_match:
-                    try:
-                        cash_val = int(val_match.group().replace("$", "").replace(",", "").replace("(", "-").replace(")", ""))
-                        break
-                    except Exception:
-                        continue
+ 
 def get_cash_runway_for_ticker(ticker):
     """
     Fetches the most recent 10-Q or 10-K filing for the given ticker, extracts cash & cash equivalents,
@@ -374,8 +363,9 @@ def get_cash_runway_for_ticker(ticker):
             "form": filing["form"]
         }
     except Exception as e:
-        return {"error": str(e)}
-
+    print("Exception in get_cash_runway_for_ticker:", e)
+    traceback.print_exc()
+    return {"error": str(e)}
 
 # --- Module 3: ATM Offering Capacity ---
 def get_atm_offering(cik, lookback=10):
