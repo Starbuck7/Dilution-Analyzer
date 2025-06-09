@@ -815,11 +815,11 @@ if ticker:
         else:
             st.write("No ATM filing found.")
 
-        #Module 4: Offering Ability- Authorized vs Outstanding Shares & Float
+       # Module 4: Offering Ability- Authorized vs Outstanding Shares & Float
         float_val = get_public_float(cik)
         authorized = get_authorized_shares(cik)
-    	outstanding = get_outstanding_shares(cik)
-		offering_data = estimate_offering_ability(cik)
+        outstanding = get_outstanding_shares(cik)
+        offering_data = estimate_offering_ability(cik)
         st.subheader("4. Offering Ability")
         for k, v in offering_data.items():
             try:
@@ -832,7 +832,6 @@ if ticker:
         st.write(f"Public Float: {float_val:,}" if float_val else "Public Float: Not found")
         st.write(f"Authorized Shares: {authorized:,}" if authorized else "Authorized Shares: Not found")
         st.write(f"Outstanding Shares: {outstanding:,}" if outstanding else "Outstanding Shares: Not found")
-
         #Moduele 5: Convertibles & Warrants
         convertible_results = get_convertibles_and_warrants_with_amounts(cik)
         instruments = convertible_results if convertible_results else []  # Always define instruments
