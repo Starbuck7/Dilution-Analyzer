@@ -7,7 +7,6 @@ import logging
 import os
 import yfinance as yf
 import time
-import glob
 from bs4 import XMLParsedAsHTMLWarning
 from datetime import datetime, timedelta
 from yahoo_fin import stock_info as si
@@ -222,56 +221,6 @@ def _parse_market_cap_str(market_cap_str):
 
 # -------------------- Module 2: Cash Runway --------------------
 
-def get_latest_filing(cik, form_types=("10-Q", "10-K")):
-    # First try JSON feed
-    url = f"https://data.sec.gov/submissions/CIK{str(cik).zfill(10)}.json"
-    resp = requests.get(url, headers=USER_AGENT)
-    if resp.status_code == 200:
-        data = resp.json()
-        filings = data.get("filings", {}).get("recent", {})
-        for i, form in enumerate(filings.get("form", [])):
-            if form in form_types:
-                try:
-                    accession = filings["accessionNumber"][i].replace("-", "")
-                    file_name = filings["primaryDocument"][i]
-                    period = filings.get("periodOfReport", [None])[i]
-                    return {
-                        "form": form,
-                        "accession": accession,
-                        "file_name": file_name,
-                        "period": period,
-                        "source": "recent"
-                    }
-                except IndexError:
-                    continue
-    # Try "files" for historical filings
-    for f in data.get("filings", {}).get("files", []):
-        f_url = "https://data.sec.gov" + f["name"]
-        f_resp = requests.get(f_url, headers=USER_AGENT)
-        f_resp.raise_for_status()
-        f_data = f_resp.json()
-        for i, form in enumerate(f_data.get("form", [])):
-            if form in form_types:
-                try:
-                    accession = f_data["accessionNumber"][i].replace("-", "")
-                    file_name = f_data["primaryDocument"][i]
-                    period = f_data.get("periodOfReport", [None])[i]
-                    return {
-                        "form": form,
-                        "accession": accession,
-                        "file_name": file_name,
-                        "period": period,
-                        "source": "historical"
-                    }
-                except IndexError:
-                    continue
-    # Fallback to HTML scraping
-    html_results = scrape_sec_filings_html(cik, forms=form_types)
-    if not html_results:
-        raise ValueError(f"No {', '.join(form_types)} filings found in JSON or HTML.")
-    return html_results[0]
-
-
 def fetch_filing_html(cik, accession, file_name):
     url = SEC_ARCHIVES_URL.format(cik=cik, accession_nodash=accession, file_name=file_name)
     resp = requests.get(url, headers=USER_AGENT)
@@ -322,33 +271,89 @@ def extract_cash_and_burn(html):
 
     return period_str, period_months, cash_val, net_cash_used
 
-
-def calculate_burn_and_runway(cash, net_cash_used, period_months):
-    if not (cash and net_cash_used and period_months):
-        return None, None
-    # net_cash_used is negative (cash outflow), so take its absolute and divide by period
-    burn_rate = abs(net_cash_used) / period_months
-    runway = cash / burn_rate if burn_rate else None
-    return round(burn_rate, 2), round(runway, 2) if runway else None
-
-
 def get_cash_runway_for_ticker(ticker):
+    """
+    Fetches the most recent 10-Q or 10-K filing for the given ticker, extracts cash & cash equivalents,
+    net cash used in operating activities, and calculates cash runway in months.
+
+    Returns a dict with keys:
+      - period_string
+      - period_months
+      - cash
+      - net_cash_used
+      - burn_rate
+      - runway_months
+      - cik
+      - accession
+      - file_name
+      - form
+      - error (optional)
+    """
     try:
         cik = get_cik_from_ticker(ticker)
-        filing = get_latest_filing(cik, form_types=("10-Q", "10-K"))
-        html = fetch_filing_html(cik, filing["accession"], filing["file_name"])
-        period_str, period_months, cash, net_cash_used = extract_cash_and_burn(html)
-        burn_rate, runway = calculate_burn_and_runway(cash, net_cash_used, period_months)
+        # Fetch the latest 10-Q or 10-K using robust HTML-first/JSON-fallback logic
+        filing = get_latest_filing(cik, forms=("10-Q", "10-K"))
+        html = fetch_filing_html(cik, filing["accession"], filing.get("file_name") or filing.get("doc_link").split("/")[-1])
+
+        # Extraction logic
+        soup = BeautifulSoup(html, "lxml")
+        text = soup.get_text(separator="\n")
+
+        # Extract period (e.g. "For the three months ended March 31, 2025")
+        period_match = re.search(
+            r"For the (three|six|nine|twelve)[- ]month[s]? ended\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})",
+            text, re.IGNORECASE)
+        period_str = None
+        period_months = None
+        if period_match:
+            period_str = period_match.group(0)
+            months_map = {"three": 3, "six": 6, "nine": 9, "twelve": 12}
+            for name, val in months_map.items():
+                if name in period_match.group(1).lower():
+                    period_months = val
+                    break
+
+        # Extract cash and cash equivalents (look for first occurrence)
+        cash_val = None
+        cash_lines = [line for line in text.split("\n") if re.search(r"cash and cash equivalents", line, re.I)]
+        for line in cash_lines:
+            match = re.search(r"\$?[\(\-]?\d[\d,]*\.?\d*", line)
+            if match:
+                try:
+                    cash_val = int(match.group().replace("$", "").replace(",", "").replace("(", "-").replace(")", ""))
+                    break
+                except Exception:
+                    continue
+
+        # Extract net cash used in operating activities (from cash flow statement)
+        net_cash_used = None
+        op_lines = [line for line in text.split("\n") if re.search(r"net cash used in operating activities", line, re.I)]
+        for line in op_lines:
+            match = re.search(r"\$?[\(\-]?\d[\d,]*\.?\d*", line)
+            if match:
+                try:
+                    net_cash_used = int(match.group().replace("$", "").replace(",", "").replace("(", "-").replace(")", ""))
+                    break
+                except Exception:
+                    continue
+
+        # Calculate burn rate and runway
+        burn_rate = None
+        runway = None
+        if cash_val is not None and net_cash_used is not None and period_months:
+            burn_rate = abs(net_cash_used) / period_months
+            runway = cash_val / burn_rate if burn_rate else None
+
         return {
             "period_string": period_str,
             "period_months": period_months,
-            "cash": cash,
+            "cash": cash_val,
             "net_cash_used": net_cash_used,
-            "burn_rate": burn_rate,
-            "runway_months": runway,
+            "burn_rate": round(burn_rate, 2) if burn_rate else None,
+            "runway_months": round(runway, 2) if runway else None,
             "cik": cik,
             "accession": filing["accession"],
-            "file_name": filing["file_name"],
+            "file_name": filing.get("file_name") or filing.get("doc_link").split("/")[-1],
             "form": filing["form"]
         }
     except Exception as e:
@@ -538,7 +543,7 @@ def get_public_float(ticker):
         return public_float
     raise ValueError("Public float not found for this ticker.")
 
-def estimate_offering_ability(cik):
+def estimate_offering_ability(cik, ticker):
     try:
         authorized = get_authorized_shares(cik)
         outstanding = get_outstanding_shares(cik)
