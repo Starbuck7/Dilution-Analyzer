@@ -24,15 +24,6 @@ logger = logging.getLogger(__name__)
 
 # --- Utility: Fetch SEC JSON ---
 def fetch_filings_html(cik, forms=None, max_results=10):
-    """
-    Scrape SEC EDGAR for filings matching form types, paginating as needed.
-    Args:
-        cik (str|int): CIK or ticker
-        forms (tuple|list|None): e.g. ("10-Q", "10-K") or None for any
-        max_results (int): max filings to return
-    Returns:
-        List of dicts with keys: form, accession, date_filed, doc_link
-    """
     cik = str(cik).lstrip('0')
     base_url = f"https://www.sec.gov/edgar/browse/?CIK={cik}&owner=exclude"
     filings = []
@@ -45,8 +36,13 @@ def fetch_filings_html(cik, forms=None, max_results=10):
         soup = BeautifulSoup(resp.text, "html.parser")
         table = soup.find('table', class_='table')
         if not table:
+            # log or print warning here if needed
             break
-        for row in table.find('tbody').find_all('tr'):
+        tbody = table.find('tbody')
+        if not tbody:
+            # log or print warning here if needed
+            break
+        for row in tbody.find_all('tr'):
             cols = row.find_all('td')
             if len(cols) < 5:
                 continue
@@ -72,7 +68,7 @@ def fetch_filings_html(cik, forms=None, max_results=10):
         else:
             page_url = None
     return filings
-
+ 
 def fetch_filings_json(cik, forms=None, max_results=10):
     """
     Fetch filings from SEC JSON feed if available.
