@@ -610,7 +610,14 @@ st.markdown("Analyze dilution and financial health based on SEC filings.")
 
 # Input ticker
 ticker = st.text_input("Enter a stock ticker (e.g., SYTA)", "").strip().upper()
-
+if ticker:  # Only proceed if ticker is not empty
+    # Module 1: Market Cap
+    market_cap = get_market_cap(ticker)
+    st.subheader("1. Market Cap")
+    st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
+    # ...rest of your modules...
+else:
+    st.warning("Please enter a stock ticker to begin analysis.")
 # Module 1: Market Cap
 market_cap = get_market_cap(ticker)
 st.subheader("1. Market Cap")
