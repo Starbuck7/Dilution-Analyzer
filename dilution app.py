@@ -20,18 +20,22 @@ from sec_utils import (
 )
 
 # -------------------- Module 1: Market Cap --------------------
+logger = logging.getLogger(__name__)
+
 def get_market_cap(ticker):
+    if not ticker:
+        logger.warning("Empty ticker passed to get_market_cap.")
+        return None
     try:
         yf_ticker = yf.Ticker(ticker)
         info = yf_ticker.info
-        print("yfinance info:", info)  # Add this
+        # print("yfinance info:", info)  # Uncomment for debugging
         market_cap = info.get('marketCap')
         if market_cap:
             logger.info(f"Market cap for {ticker} from yfinance: {market_cap}")
             return market_cap
     except Exception as e:
         logger.warning(f"yfinance failed for {ticker} with error: {e}")
-    # ...rest unchanged...
 
     # Try yahoo_fin.get_quote_table
     try:
@@ -610,18 +614,13 @@ st.markdown("Analyze dilution and financial health based on SEC filings.")
 
 # Input ticker
 ticker = st.text_input("Enter a stock ticker (e.g., SYTA)", "").strip().upper()
+ # Module 1: Market Cap
 if ticker:  # Only proceed if ticker is not empty
-    # Module 1: Market Cap
     market_cap = get_market_cap(ticker)
     st.subheader("1. Market Cap")
     st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
-    # ...rest of your modules...
 else:
-    st.warning("Please enter a stock ticker to begin analysis.")
-# Module 1: Market Cap
-market_cap = get_market_cap(ticker)
-st.subheader("1. Market Cap")
-st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
+    st.info("Please enter a stock ticker to begin analysis.")
 
 # Module 2: Cash Runway
 st.header("Module 2: Cash Runway")
