@@ -10,6 +10,14 @@ import traceback
 from bs4 import XMLParsedAsHTMLWarning
 from datetime import datetime, timedelta
 from yahoo_fin import stock_info as si
+from sec_utils import (
+    get_cik_from_ticker,
+    fetch_filings_html,
+    fetch_filings_json,
+    get_latest_filing,
+    get_all_filings,
+    fetch_filing_html
+)
 
 # -------------------- Module 1: Market Cap --------------------
 def get_market_cap(ticker):
@@ -61,12 +69,6 @@ def _parse_market_cap_str(market_cap_str):
 
 # -------------------- Module 2: Cash Runway --------------------
 
-def fetch_filing_html(cik, accession, file_name):
-    url = SEC_ARCHIVES_URL.format(cik=cik, accession_nodash=accession, file_name=file_name)
-    resp = requests.get(url, headers=USER_AGENT)
-    resp.raise_for_status()
-    return resp.text
- 
 def extract_cash_and_burn(html):
     soup = BeautifulSoup(html, "lxml")
 
@@ -259,14 +261,6 @@ def get_atm_offering(cik, lookback=10):
 
 
 # -------------------- Module 4: Offering Ability - Oustanding, Authorized, Shelf Shares & Float --------------------
-def fetch_filing_html(cik, accession, file_name):
-    # CIK must be int (no leading zero), accession no dashes
-    cik = str(int(cik))
-    html_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{file_name}"
-    resp = requests.get(html_url, headers=USER_AGENT)
-    resp.raise_for_status()
-    return resp.text
-
 def extract_authorized_shares_from_html(html):
     text = BeautifulSoup(html, "lxml").get_text().replace(",", "")
     patterns = [
