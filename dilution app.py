@@ -195,7 +195,7 @@ AMOUNT_REGEX = r"(?:up to|aggregate offering price of|maximum aggregate offering
 
 def get_atm_offering(cik, lookback=10):
     atm_results = []
-    filings = get_all_filings(cik, lookback=lookback, forms=['S-1', 'S-3', '424B5', '8-K', 'F-3', 'F-1'])
+    filings = get_all_filings(cik, forms=['S-1', 'S-3', '424B5', '8-K', 'F-3', 'F-1'], max_results=lookback)
     for filing in filings:
         filing_url = filing.get("primary_doc_url") or filing.get("filing_url") or filing.get("url")
         filing_type = filing.get("form")
