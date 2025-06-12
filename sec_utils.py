@@ -128,18 +128,40 @@ def get_all_filings(cik, forms=None, max_results=10):
 @lru_cache(maxsize=100)
 def get_cik_from_ticker(ticker):
     """
-    Looks up and returns the 10-digit CIK for a given ticker.
-    Raises ValueError if not found.
+    Try to get CIK from mapping, else fallback to SEC EDGAR search.
+    Returns a zero-padded 10-digit CIK string.
     """
-    url = "https://www.sec.gov/include/ticker.txt"
-    resp = requests.get(url, headers=USER_AGENT)
-    resp.raise_for_status()
-    mapping = dict(line.split('\t') for line in resp.text.strip().split('\n'))
+    # 1. Try mapping
+    mapping = get_ticker_cik_mapping()  # however you load your mapping
     cik = mapping.get(ticker.lower())
     if cik:
         return cik.zfill(10)
+
+    # 2. Fallback: Search SEC EDGAR
+    try:
+        # SEC company search URL
+        url = f"https://www.sec.gov/edgar/browse/?CIK={ticker}&owner=exclude"
+        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        if resp.status_code == 200:
+            m = re.search(r"CIK=(\d{10})", resp.text)
+            if not m:
+                # Try 8 or 9 digit CIK, pad to 10
+                m = re.search(r"CIK=(\d+)", resp.text)
+            if m:
+                cik = m.group(1).zfill(10)
+                return cik
+        # Alternate fallback: try the new SEC search api (2024+)
+        alt_url = f"https://data.sec.gov/submissions/CIK{ticker}.json"
+        resp2 = requests.get(alt_url, headers={"User-Agent": "Mozilla/5.0"})
+        if resp2.status_code == 200:
+            # This only works if user passes CIK as ticker
+            return ticker.zfill(10)
+    except Exception as e:
+        pass
+
     raise ValueError(f"CIK not found for ticker: {ticker}")
 
+# If your mapping is loaded via a file or global variable, adjust get_ticker_cik_mapping() accordingly.
 def fetch_filing_html(cik, accession, file_name):
     """
     Fetches the raw HTML text for a specific SEC filing document.
