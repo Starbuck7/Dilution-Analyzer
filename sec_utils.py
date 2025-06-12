@@ -7,7 +7,7 @@ import logging
 import warnings
 from bs4 import XMLParsedAsHTMLWarning
 from functools import lru_cache
-MAPPING_PATH = "ticker_cik_mapping.json"
+
 USER_AGENT = {"User-Agent": "DilutionAnalyzerBot/1.0 (ASHLEYMCGAVERN@YAHOO.COM)"}
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
@@ -128,46 +128,12 @@ def get_all_filings(cik, forms=None, max_results=10):
     return fetch_filings_json(cik, forms=forms, max_results=max_results)
 
 @lru_cache(maxsize=100)
-def get_ticker_cik_mapping():
-    """
-    Loads the ticker-to-CIK mapping from a local file if present,
-    else fetches from the SEC and saves for next use.
-    Returns: dict mapping lowercase ticker to CIK (as a string)
-    """
-    # 1. Use local cache if available
-    if os.path.exists(MAPPING_PATH):
-        with open(MAPPING_PATH, "r") as f:
-            mapping = json.load(f)
-        return mapping
-
-    # 2. Download from SEC
-    url = "https://www.sec.gov/files/company_tickers.json"
-    resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-    mapping = {}
-    if resp.status_code == 200:
-        data = resp.json()
-        for entry in data.values():
-            ticker = entry["ticker"].lower()
-            cik = str(entry["cik_str"]).zfill(10)
-            mapping[ticker] = cik
-        # Save for next time
-        with open(MAPPING_PATH, "w") as f:
-            json.dump(mapping, f)
-        return mapping
-    raise RuntimeError("Failed to download SEC ticker → CIK mapping.")
 def get_cik_from_ticker(ticker):
-    """
-    Try to get CIK from mapping, else fallback to SEC EDGAR search.
-    Returns a zero-padded 10-digit CIK string.
-    """
-    # 1. Try mapping
-    mapping = get_ticker_cik_mapping()  # however you load your mapping
-    cik = mapping.get(ticker.lower())
-    if cik:
-        return cik.zfill(10)
-
-    # 2. Fallback: Search SEC EDGAR
     try:
+        cik = get_cik_from_ticker(ticker)
+    except ValueError as e:
+        st.error(str(e))
+        st.stop()
         # SEC company search URL
         url = f"https://www.sec.gov/edgar/browse/?CIK={ticker}&owner=exclude"
         resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
