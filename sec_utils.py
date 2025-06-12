@@ -128,9 +128,6 @@ def get_all_filings(cik, forms=None, max_results=10):
     return fetch_filings_json(cik, forms=forms, max_results=max_results)
 
 @lru_cache(maxsize=100)
-import requests
-import re
-
 def get_cik_from_ticker(ticker):
     # Try live lookup on SEC EDGAR
     url = f"https://www.sec.gov/edgar/browse/?CIK={ticker}&owner=exclude"
