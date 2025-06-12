@@ -129,19 +129,19 @@ def get_all_filings(cik, forms=None, max_results=10):
 
 @lru_cache(maxsize=100)
 def get_cik_from_ticker(ticker):
-    # Try live lookup on SEC EDGAR
-    url = f"https://www.sec.gov/edgar/browse/?CIK={ticker}&owner=exclude"
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; CIKLookup/1.0; +your_email@example.com)"}
-    resp = requests.get(url, headers=headers)
-    if resp.status_code == 200:
-        # Try to find a CIK in the HTML (as 10 digits, or fewer and pad)
-        m = re.search(r"CIK=(\d{10})", resp.text)
-        if not m:
-            m = re.search(r"CIK=(\d+)", resp.text)
-        if m:
-            cik = m.group(1).zfill(10)
-            return cik
+    """
+    Looks up and returns the 10-digit CIK for a given ticker.
+    Raises ValueError if not found.
+    """
+    url = "https://www.sec.gov/include/ticker.txt"
+    resp = requests.get(url, headers=USER_AGENT)
+    resp.raise_for_status()
+    mapping = dict(line.split('\t') for line in resp.text.strip().split('\n'))
+    cik = mapping.get(ticker.lower())
+    if cik:
+        return cik.zfill(10)
     raise ValueError(f"CIK not found for ticker: {ticker}")
+
     
 # If your mapping is loaded via a file or global variable, adjust get_ticker_cik_mapping() accordingly.
 def fetch_filing_html(cik, accession, file_name):
