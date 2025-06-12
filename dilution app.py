@@ -636,7 +636,7 @@ if ticker:
     try:
         cik = get_cik_from_ticker(ticker)
     except ValueError as e:
-        st.error(str(e))
+        st.error(str(e) + " (Tried live lookup on SEC as backup.)")
         st.stop()
         
     # Market Cap
