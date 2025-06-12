@@ -633,7 +633,12 @@ st.markdown("Analyze dilution and financial health based on SEC filings.")
 ticker = st.text_input("Enter a stock ticker (e.g., SYTA)", "").strip().upper()
 
 if ticker:
-    cik = get_cik_from_ticker(ticker)
+    try:
+        cik = get_cik_from_ticker(ticker)
+    except ValueError as e:
+        st.error(str(e))
+        st.stop()
+        
     # Market Cap
     market_cap = get_market_cap(ticker)
     st.subheader("1. Market Cap")
