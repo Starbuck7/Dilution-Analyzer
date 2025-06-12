@@ -1,65 +1,23 @@
 import streamlit as st
-import requests
-import re
-import warnings
-import logging
-import os
 import yfinance as yf
-import time
-import traceback
-from bs4 import BeautifulSoup
-from bs4 import XMLParsedAsHTMLWarning
 from datetime import datetime, timedelta
-from yahoo_fin import stock_info as si
 from sec_utils import (
     get_cik_from_ticker,
-    fetch_filings_html,
-    fetch_filings_json,
+    fetch_filing_html,
     get_latest_filing,
     get_all_filings,
-    fetch_filing_html
 )
+from bs4 import BeautifulSoup
+import re
 
-# -------------------- Module 1: Market Cap --------------------
-logger = logging.getLogger(__name__)
-
-def get_market_cap(ticker):
-    if not ticker:
-        logger.warning("Empty ticker passed to get_market_cap.")
-        return None
-    try:
-        yf_ticker = yf.Ticker(ticker)
-        info = yf_ticker.info
-        # print("yfinance info:", info)  # Uncomment for debugging
-        market_cap = info.get('marketCap')
-        if market_cap:
-            logger.info(f"Market cap for {ticker} from yfinance: {market_cap}")
-            return market_cap
-    except Exception as e:
-        logger.warning(f"yfinance failed for {ticker} with error: {e}")
-
-    # Try yahoo_fin.get_quote_table
-    try:
-        quote_table = si.get_quote_table(ticker, dict_result=True)
-        market_cap_str = quote_table.get('Market Cap')
-        if market_cap_str:
-            return _parse_market_cap_str(market_cap_str)
-    except Exception as e:
-        logger.warning(f"yahoo_fin.get_quote_table failed for {ticker} with error: {e}")
-
-    # Try yahoo_fin.get_stats_valuation
-    try:
-        val_table = si.get_stats_valuation(ticker)
-        if not val_table.empty:
-            mc_row = val_table[val_table.iloc[:, 0] == 'Market Cap (intraday)']
-            if not mc_row.empty:
-                market_cap_str = mc_row.iloc[0, 1]
-                return _parse_market_cap_str(market_cap_str)
-    except Exception as e:
-        logger.warning(f"yahoo_fin.get_stats_valuation failed for {ticker} with error: {e}")
-
-    logger.error(f"Could not retrieve market cap for {ticker}")
-    return None
+# ===================== Helpers and Patterns =====================
+def _fmt(val):
+    if val is None:
+        return "Not found"
+    elif isinstance(val, (int, float)):
+        return f"{val:,.0f}"
+    else:
+        return str(val)
 
 def _parse_market_cap_str(market_cap_str):
     try:
@@ -68,12 +26,21 @@ def _parse_market_cap_str(market_cap_str):
             return int(float(market_cap_str[:-1]) * multipliers[market_cap_str[-1]])
         else:
             return int(market_cap_str.replace(',', ''))
-    except Exception as e:
-        logger.warning(f"Failed to parse market cap string '{market_cap_str}': {e}")
+    except Exception:
         return None
 
-# -------------------- Module 2: Cash Runway --------------------
-# Expanded patterns for more robust matching
+def get_market_cap(ticker):
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        mc = info.get('marketCap')
+        if mc: return mc
+    except Exception:
+        pass
+    # Try yahoo_fin fallback if needed (not included for brevity)
+    return None
+
+# ===================== Module 2: Cash Runway =====================
 CASH_PATTERNS = [
     r"cash and cash equivalents",
     r"total cash and cash equivalents",
@@ -94,8 +61,8 @@ PERIOD_PATTERNS = [
     r"For the (three|six|nine|twelve)[- ]month[s]? ended\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})",
     r"As of\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})"
 ]
+
 def extract_numeric_cell(cell):
-    """Extracts a numeric value from a cell (including negatives in parentheses)."""
     match = re.search(r"\$?[\(\-]?\d[\d,]*\.?\d*", cell)
     if match:
         try:
@@ -109,7 +76,6 @@ def extract_cash_and_burn_from_html(html):
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text(separator="\n")
 
-    # Extract reporting period
     period_str, period_months = None, None
     for pat in PERIOD_PATTERNS:
         period_match = re.search(pat, text, re.IGNORECASE)
@@ -125,14 +91,13 @@ def extract_cash_and_burn_from_html(html):
 
     # Extract cash value (try tables first, then text)
     cash_val = None
-    # Try to find in tables
     for label_pat in CASH_PATTERNS:
         label_cells = soup.find_all(string=re.compile(label_pat, re.I))
         for cell in label_cells:
             row = cell.find_parent("tr")
             if row:
                 tds = row.find_all("td")
-                for td in tds[::-1]:  # Often value is at the end of the row
+                for td in tds[::-1]:
                     val = extract_numeric_cell(td.get_text())
                     if val is not None:
                         cash_val = val
@@ -141,7 +106,6 @@ def extract_cash_and_burn_from_html(html):
                 break
         if cash_val is not None:
             break
-    # Fallback: search the full text
     if cash_val is None:
         for pat in CASH_PATTERNS:
             for line in text.split("\n"):
@@ -153,7 +117,7 @@ def extract_cash_and_burn_from_html(html):
             if cash_val is not None:
                 break
 
-    # Extract net cash used in operating activities (burn)
+    # Extract net cash used in operating activities
     net_cash_used = None
     for label_pat in BURN_PATTERNS:
         label_cells = soup.find_all(string=re.compile(label_pat, re.I))
@@ -170,7 +134,6 @@ def extract_cash_and_burn_from_html(html):
                 break
         if net_cash_used is not None:
             break
-    # Fallback: search the full text
     if net_cash_used is None:
         for pat in BURN_PATTERNS:
             for line in text.split("\n"):
@@ -183,15 +146,10 @@ def extract_cash_and_burn_from_html(html):
                 break
 
     return period_str, period_months, cash_val, net_cash_used
- 
+
 def get_cash_runway_for_ticker(ticker):
-    """
-    Fetches the most recent 10-Q or 10-K filing for the given ticker, extracts cash & cash equivalents,
-    net cash used in operating activities, and calculates cash runway in months.
-    """
     try:
         cik = get_cik_from_ticker(ticker)
-        # Try the latest 10-Q, then 10-K if needed
         for form in ["10-Q", "10-K"]:
             filing = get_latest_filing(cik, forms=(form,))
             if not filing:
@@ -199,8 +157,7 @@ def get_cash_runway_for_ticker(ticker):
             html = fetch_filing_html(cik, filing["accession"], filing.get("file_name") or filing.get("doc_link").split("/")[-1])
             period_str, period_months, cash_val, net_cash_used = extract_cash_and_burn_from_html(html)
             if (cash_val is not None) and (net_cash_used is not None):
-                break  # Found both
-        # Calculate burn rate and runway
+                break
         burn_rate = None
         runway = None
         if cash_val is not None and net_cash_used is not None and period_months:
@@ -222,7 +179,7 @@ def get_cash_runway_for_ticker(ticker):
         import traceback; traceback.print_exc()
         return {"error": str(e)}
 
-# --- Module 3: ATM Offering Capacity ---
+# ===================== Module 3: ATM Offering Capacity =====================
 ATM_PHRASES = [
     r"at[-\s]?the[-\s]?market(?:\s+offering)?",
     r"committed equity financing",
@@ -234,26 +191,18 @@ ATM_PHRASES = [
     r"shelf (?:offering|registration)",
     r"sales agreement with [A-Za-z0-9, \.\-&]+",
 ]
-
 AMOUNT_REGEX = r"(?:up to|aggregate offering price of|maximum aggregate offering price of|commitment amount of)\s*\$?([\d,.]+)\s*(million|billion)?"
 
 def get_atm_offering(cik, lookback=10):
-    """
-    Scan recent filings for ATM or equity line agreements and return extracted info.
-    Returns (amount_usd, source_url) or (None, None) if not found.
-    Also returns context if found.
-    """
     atm_results = []
     filings = get_all_filings(cik, lookback=lookback, forms=['S-1', 'S-3', '424B5', '8-K', 'F-3', 'F-1'])
     for filing in filings:
         filing_url = filing.get("primary_doc_url") or filing.get("filing_url") or filing.get("url")
         filing_type = filing.get("form")
         filing_date = filing.get("filed")
-        # Get filing HTML/text
         try:
-            html = fetch_filings_html(filing_url)
-        except Exception as e:
-            logger.warning(f"Could not fetch filing HTML for {filing_url}: {e}")
+            html = fetch_filing_html(cik, filing["accession"], filing.get("file_name") or filing.get("doc_link").split("/")[-1])
+        except Exception:
             continue
         if not html:
             continue
@@ -261,7 +210,6 @@ def get_atm_offering(cik, lookback=10):
         found = False
         for phrase in ATM_PHRASES:
             for match in re.finditer(phrase, text, re.IGNORECASE):
-                # Grab a window of context
                 context_window = text[max(0, match.start()-100):match.end()+500]
                 amt_match = re.search(AMOUNT_REGEX, context_window, re.IGNORECASE)
                 amount = None
@@ -276,9 +224,8 @@ def get_atm_offering(cik, lookback=10):
                                 amount *= 1e9
                             elif scale.startswith("m"):
                                 amount *= 1e6
-                    except Exception as e:
-                        logger.warning(f"Could not parse amount: {amt_match.group(0)} ({e})")
-                # Try to extract counterparty (company name)
+                    except Exception:
+                        pass
                 counterparty = None
                 counterparty_match = re.search(r"(?:agreement with|sales agreement with)\s+([A-Za-z0-9, \.\-&]+)", context_window)
                 if counterparty_match:
@@ -294,26 +241,19 @@ def get_atm_offering(cik, lookback=10):
                 })
                 found = True
         if found:
-            # For efficiency, only process the first relevant filing (remove if you want ALL matches)
             break
-
-    # Pick the largest amount found, or the first, if multiple
     if atm_results:
         best = max(atm_results, key=lambda x: x["amount_usd"] or 0)
         return best["amount_usd"], best["filing_url"], best
     return None, None, None
 
-
-# -------------------- Module 4: Offering Ability - Oustanding, Authorized, Shelf Shares & Float --------------------
-# Authorized Shares
+# ===================== Module 4: Offering Ability =====================
 AUTHORIZED_PATTERNS = [
     r"authorized[\s\-]*shares[^:\d]*[:\s]*([\d,]+)",
     r"number of shares authorized[^:\d]*[:\s]*([\d,]+)",
     r"common stock.*?authorized[^:\d]*[:\s]*([\d,]+)",
     r"shares of common stock authorized[^:\d]*[:\s]*([\d,]+)",
 ]
-
-# Outstanding Shares
 OUTSTANDING_PATTERNS = [
     r"outstanding[\s\-]*shares[^:\d]*[:\s]*([\d,]+)",
     r"number of shares outstanding[^:\d]*[:\s]*([\d,]+)",
@@ -321,12 +261,6 @@ OUTSTANDING_PATTERNS = [
     r"shares of common stock outstanding[^:\d]*[:\s]*([\d,]+)",
 ]
 
-# Public Float
-PUBLIC_FLOAT_PATTERNS = [
-    r"public float[^:\d]*[:\s]*\$?([\d,]+)",
-    r"aggregate market value of voting.*?held by non-affiliates[^:\d]*[:\s]*\$?([\d,]+)",
-    r"held by non[-\s]?affiliates[^:\d]*[:\s]*\$?([\d,]+)",
-]
 def extract_first_match(text, patterns):
     for pat in patterns:
         m = re.search(pat, text, re.IGNORECASE)
@@ -347,8 +281,7 @@ def get_authorized_shares(cik):
         if val:
             return val
         return None
-    except Exception as e:
-        print(f"Error in get_authorized_shares: {e}")
+    except Exception:
         return None
 
 def get_outstanding_shares(cik):
@@ -360,13 +293,11 @@ def get_outstanding_shares(cik):
         if val:
             return val
         return None
-    except Exception as e:
-        print(f"Error in get_outstanding_shares: {e}")
+    except Exception:
         return None
 
 def get_shelf_registered_shares(cik, num_filings=10):
     try:
-        # Use HTML-first, JSON-fallback to get recent shelf registration filings
         filing_types = ("S-3", "S-1", "424B3")
         filings = get_all_filings(cik, forms=filing_types, max_results=num_filings)
         all_text = ""
@@ -375,8 +306,6 @@ def get_shelf_registered_shares(cik, num_filings=10):
             html = fetch_filing_html(cik, filing["accession"], file_name)
             text = BeautifulSoup(html, "lxml").get_text(separator="\n")
             all_text += "\n" + text
-
-        # Dollar-based shelf matches
         dollar_matches = re.findall(
             r"offer(?:ing)?(?: and sell)? (?:up to|of up to)?\s*\$?([\d,.]+)\s*(million|billion)?",
             all_text, re.IGNORECASE)
@@ -392,8 +321,6 @@ def get_shelf_registered_shares(cik, num_filings=10):
                 amounts.append(num)
             except Exception:
                 continue
-
-        # Share-based shelf matches
         share_matches = re.findall(
             r"offer(?:ing)?(?: and sell)? (?:up to|of up to)?\s*([\d,.]+)\s*(shares|common stock)?",
             all_text, re.IGNORECASE)
@@ -403,12 +330,10 @@ def get_shelf_registered_shares(cik, num_filings=10):
                 amounts.append(num)
             except Exception:
                 continue
-
         if amounts:
             return max(amounts)
         return None
-    except Exception as e:
-        print(f"Error extracting shelf registered shares: {e}")
+    except Exception:
         return None
 
 def get_public_float(ticker):
@@ -442,9 +367,8 @@ def estimate_offering_ability(cik, ticker):
         "Shelf Registered Shares": shelf_usd,
         "Public Float": float_shares
     }
-       
-# -------------------- Module 5: Convertibles and Warrants --------------------
 
+# ===================== Module 5: Convertibles and Warrants =====================
 CONVERTIBLE_PATTERNS = [
     r"convertible (?:note|debt|bond|security|securities|preferred stock)[^$]*?\$?([\d,.]+)(?:[^$]*?conversion price[^$]*?\$?([\d,.]+))?",
     r"aggregate principal amount of convertible[^$]*?\$?([\d,.]+)"
@@ -490,19 +414,17 @@ def get_convertibles_and_warrants_with_amounts(cik, ticker, filings_to_check=5):
     return all_results
 
 def rate_convertible_warrant_risk(ticker, results, float_shares):
-    """Categorize dilution risk from convertibles/warrants near the money."""
     try:
         stock = yf.Ticker(ticker)
         price = stock.info.get('regularMarketPrice')
         if not price or not float_shares:
             return "Unknown"
-        # Aggregate at/near-the-money
         at_money = 0
         for item in results:
             conv_price = item.get('conversion_price') or item.get('exercise_price')
             amt = item.get('amount', 0)
             if conv_price is not None:
-                if abs(conv_price - price)/price <= 0.1:  # within 10%
+                if abs(conv_price - price)/price <= 0.1:
                     at_money += amt
         ratio = at_money / float_shares if float_shares else 0
         if at_money == 0:
@@ -516,8 +438,53 @@ def rate_convertible_warrant_risk(ticker, results, float_shares):
     except Exception:
         return "Unknown"
 
+def get_convertibles_score(instruments, ticker, float_shares=None):
+    if not instruments or len(instruments) == 0:
+        return 0, "None", {"at_money_shares": 0, "float_shares": float_shares}
+    if float_shares is None:
+        try:
+            stock = yf.Ticker(ticker)
+            float_shares = stock.info.get('floatShares')
+        except Exception:
+            float_shares = None
+    try:
+        stock = yf.Ticker(ticker)
+        price = stock.info.get('regularMarketPrice')
+    except Exception:
+        price = None
+    if price is None or float_shares is None or float_shares == 0:
+        return 0, "Unknown", {"at_money_shares": 0, "float_shares": float_shares, "price": price}
+    at_money = 0
+    for item in instruments:
+        conv_price = item.get('conversion_price') or item.get('exercise_price')
+        amt = item.get('amount', 0)
+        if conv_price is not None and amt:
+            try:
+                if abs(conv_price - price)/price <= 0.1:
+                    at_money += amt
+            except Exception:
+                continue
+    ratio = at_money / float_shares if float_shares else 0
+    if at_money == 0:
+        score = 0
+        label = "None"
+    elif ratio > 0.2:
+        score = 15
+        label = "Large"
+    elif ratio > 0.05:
+        score = 8
+        label = "Moderate"
+    else:
+        score = 3
+        label = "Minimal"
+    return score, label, {
+        "at_money_shares": at_money,
+        "float_shares": float_shares,
+        "price": price,
+        "ratio": ratio
+    }
 
-# -------------------- Module 6: Historical Capital Raises --------------------
+# ===================== Module 6: Historical Capital Raises =====================
 RAISE_PATTERNS = [
     r"(?:public|registered direct|private|direct|at[-\s]?the[-\s]?market|PIPE|equity) (?:offering|placement|financing)",
     r"securities purchase agreement",
@@ -534,7 +501,6 @@ def extract_capital_raises_from_html(html):
     hits = []
     for pat in RAISE_PATTERNS:
         for m in re.finditer(pat, text, re.IGNORECASE):
-            # Try to extract amount if present
             amount = None
             if m.lastindex and m.lastindex >= 1:
                 amt_str = m.group(m.lastindex-1)
@@ -561,7 +527,6 @@ def extract_capital_raises_from_html(html):
 def get_historical_capital_raises(cik, months=18, filings_to_check=20):
     today = datetime.utcnow()
     cutoff = today - timedelta(days=int(months*30.44))
-    # Get filings in the time window (filed after cutoff date)
     filings = get_all_filings(
         cik,
         forms=['8-K', 'S-1', 'S-3', 'S-8', 'F-1', 'F-3', '424B3', '424B5', '10-Q', '10-K'],
@@ -588,11 +553,10 @@ def get_historical_capital_raises(cik, months=18, filings_to_check=20):
             continue
     return results
 
-
-# -------------------- Module 7: Dilution Pressure Score --------------------
+# ===================== Module 7: Dilution Pressure Score =====================
 def get_atm_capacity_score(atm_capacity_usd, market_cap):
     if not atm_capacity_usd or not market_cap:
-        return 10  # neutral if missing
+        return 10
     ratio = atm_capacity_usd / market_cap
     if ratio > 0.75:
         return 25
@@ -606,16 +570,6 @@ def get_atm_capacity_score(atm_capacity_usd, market_cap):
         return 5
 
 def get_authorized_vs_outstanding_score(authorized, outstanding, market_cap=None):
-    """
-    Scores dilution risk based on the percentage of authorized shares that have been issued (outstanding).
-    Scoring:
-        - 90%+ issued: 25 points
-        - 75-89% issued: 20 points
-        - 50-74% issued: 10 points
-        - 25-49% issued: 5 points
-        - <25% issued: 0 points
-    Returns the score (int).
-    """
     if authorized is None or outstanding is None or authorized == 0:
         return 0
     pct = outstanding / authorized
@@ -629,74 +583,6 @@ def get_authorized_vs_outstanding_score(authorized, outstanding, market_cap=None
         return 5
     else:
         return 0
-
-
-def get_convertibles_score(instruments, ticker, float_shares=None):
-    """
-    Scores dilution risk from convertibles and warrants.
-    - Gets current price from yfinance.
-    - For each instrument, checks if exercise/conversion price is within 10% of current price ("at-the-money").
-    - Sums the amount of shares at-the-money.
-    - Compares at-the-money shares to float/outstanding shares (float_shares). If not provided, attempts to fetch.
-    Scoring (max 15 points):
-        - >20% at-the-money: 15 points ('Large')
-        - 5-20%: 8 points ('Moderate')
-        - <5%: 3 points ('Minimal')
-        - 0 instruments or 0 at-the-money: 0 points ('None')
-    Returns: points (int), classification (str), details (dict)
-    """
-    if not instruments or len(instruments) == 0:
-        return 0, "None", {"at_money_shares": 0, "float_shares": float_shares}
-
-    # Fetch float shares if not provided
-    if float_shares is None:
-        try:
-            stock = yf.Ticker(ticker)
-            float_shares = stock.info.get('floatShares')
-        except Exception:
-            float_shares = None
-
-    # Fetch current price
-    try:
-        stock = yf.Ticker(ticker)
-        price = stock.info.get('regularMarketPrice')
-    except Exception:
-        price = None
-
-    if price is None or float_shares is None or float_shares == 0:
-        return 0, "Unknown", {"at_money_shares": 0, "float_shares": float_shares, "price": price}
-
-    at_money = 0
-    for item in instruments:
-        conv_price = item.get('conversion_price') or item.get('exercise_price')
-        amt = item.get('amount', 0)
-        if conv_price is not None and amt:
-            try:
-                if abs(conv_price - price)/price <= 0.1:  # within 10%
-                    at_money += amt
-            except Exception:
-                continue
-
-    ratio = at_money / float_shares if float_shares else 0
-    if at_money == 0:
-        score = 0
-        label = "None"
-    elif ratio > 0.2:
-        score = 15
-        label = "Large"
-    elif ratio > 0.05:
-        score = 8
-        label = "Moderate"
-    else:
-        score = 3
-        label = "Minimal"
-
-    return score, label, {
-        "at_money_shares": at_money,
-        "float_shares": float_shares,
-        "price": price,
-        "ratio": ratio
-    }
 
 def get_capital_raises_score(num_raises):
     if num_raises >= 4:
@@ -726,63 +612,57 @@ def calculate_dilution_pressure_score(
     atm_capacity_usd, authorized_shares, outstanding_shares,
     convertibles, capital_raises_past_year, cash_runway, market_cap
 ):
-    """Calculates a dilution risk score based on financial pressures."""
-    
     def safe_value(value, default=0):
-        """Prevents crashes by handling missing values gracefully."""
         return value if value is not None else default
 
-    # ✅ Ensures missing values won’t break calculations
     total_score = 0
     total_score += get_atm_capacity_score(safe_value(atm_capacity_usd), safe_value(market_cap))
     total_score += get_authorized_vs_outstanding_score(safe_value(authorized_shares), safe_value(outstanding_shares), safe_value(market_cap))
-    total_score += get_convertibles_score(safe_value(convertibles), safe_value(market_cap))
+    convertible_score, _, _ = get_convertibles_score(convertibles, "", None)
+    total_score += convertible_score
     total_score += get_capital_raises_score(safe_value(capital_raises_past_year))
     total_score += get_cash_runway_score(safe_value(cash_runway))
+    return min(total_score, 100)
 
-    return min(total_score, 100)  # ✅ Caps score at 100
-
-
-   
-# -------------------- Streamlit App --------------------
+# ===================== Streamlit App =====================
 st.title("Stock Analysis Dashboard")
 st.markdown("Analyze dilution and financial health based on SEC filings.")
 
-# Input ticker
 ticker = st.text_input("Enter a stock ticker (e.g., SYTA)", "").strip().upper()
 
 if ticker:
     cik = get_cik_from_ticker(ticker)
-   
-    # Module 1: Market Cap
+    # Market Cap
     market_cap = get_market_cap(ticker)
     st.subheader("1. Market Cap")
     st.write(f"Market Cap: ${market_cap:,.0f}" if market_cap is not None else "Market Cap: Not available")
 
-    # Module 2: Cash Runway
-    st.header("Module 2: Cash Runway")
+    # Cash Runway
+    st.header("2. Cash Runway")
     with st.spinner("Analyzing cash runway..."):
-        result = get_cash_runway_for_ticker(ticker)
-    if "error" in result:
-        st.error(f"Error: {result['error']}")
+        cash_result = get_cash_runway_for_ticker(ticker)
+    if "error" in cash_result:
+        st.error(f"Error: {cash_result['error']}")
+        runway_months = None
     else:
-        st.success(f"Latest {result['form']} for {ticker} (CIK {result['cik']}):")
-        st.write(f"- Accession: {result['accession']}")
-        st.write(f"- File: {result['file_name']}")
-        if result['period_string']:
-            st.write(f"**Reporting period:** {result['period_string']} ({result['period_months']} months)")
-        if result['cash'] is not None:
-            st.write(f"**Cash and cash equivalents:** ${result['cash']:,}")
-        if result['net_cash_used'] is not None:
-            st.write(f"**Net cash used in operating activities:** ${result['net_cash_used']:,}")
-        if result['burn_rate'] is not None:
-            st.write(f"**Burn rate:** ${result['burn_rate']:,} per month")
-        if result['runway_months'] is not None:
-            st.write(f"### 🚦 Estimated Cash Runway: **{result['runway_months']} months**")
+        st.success(f"Latest {cash_result['form']} for {ticker} (CIK {cash_result['cik']}):")
+        st.write(f"- Accession: {cash_result['accession']}")
+        st.write(f"- File: {cash_result['file_name']}")
+        if cash_result['period_string']:
+            st.write(f"**Reporting period:** {cash_result['period_string']} ({cash_result['period_months']} months)")
+        if cash_result['cash'] is not None:
+            st.write(f"**Cash and cash equivalents:** ${cash_result['cash']:,}")
+        if cash_result['net_cash_used'] is not None:
+            st.write(f"**Net cash used in operating activities:** ${cash_result['net_cash_used']:,}")
+        if cash_result['burn_rate'] is not None:
+            st.write(f"**Burn rate:** ${cash_result['burn_rate']:,} per month")
+        if cash_result['runway_months'] is not None:
+            st.write(f"### 🚦 Estimated Cash Runway: **{cash_result['runway_months']} months**")
         else:
             st.warning("Could not estimate cash runway (missing data).")
-            
-    #Module 3: ATM Offering Capacity
+        runway_months = cash_result.get('runway_months')
+
+    # ATM Offering Capacity
     atm, atm_url, atm_details = get_atm_offering(cik, lookback=10)
     st.subheader("3. ATM / Committed Equity Facility Capacity")
     if atm_details:
@@ -796,15 +676,7 @@ if ticker:
     else:
         st.write("No ATM/Equity Facility or Committed Equity Financing found in recent filings.")
 
-    # Module 4: Offering Ability- Authorized vs Outstanding Shares & Float
-    def _fmt(val):
-    if val is None:
-        return "Not found"
-    elif isinstance(val, (int, float)):
-        return f"{val:,.0f}"
-    else:
-        return str(val)
-
+    # Offering Ability
     data = estimate_offering_ability(cik, ticker)
     st.subheader("4. Offering Ability")
     st.write(f"Authorized Shares: {_fmt(data['Authorized Shares'])}")
@@ -816,20 +688,22 @@ if ticker:
     st.write(f"ATM Capacity: {_fmt(data['ATM Capacity'])}")
     st.write(f"Shelf Registered Shares: {_fmt(data['Shelf Registered Shares'])}")
     st.write(f"Public Float: {_fmt(data['Public Float'])}")
-    
-    #Moduele 5: Convertibles & Warrants
-    results = get_convertibles_and_warrants_with_amounts(cik, ticker)
-    float_shares = get_public_float(ticker)
-    risk = rate_convertible_warrant_risk(ticker, results, float_shares)
+    authorized = data['Authorized Shares']
+    outstanding = data['Outstanding Shares']
+    float_shares = data['Public Float']
+
+    # Convertibles & Warrants
+    instruments = get_convertibles_and_warrants_with_amounts(cik, ticker)
+    risk = rate_convertible_warrant_risk(ticker, instruments, float_shares)
     st.subheader("5. Convertibles and Warrants")
-    if not results:
+    if not instruments:
         st.write("None found in recent filings.")
     else:
-        for item in results:
+        for item in instruments:
             st.write(f"Type: {item['type'].capitalize()}, Amount: {item['amount']:,.0f}, Price: ${item.get('conversion_price') or item.get('exercise_price')}")
     st.write(f"**Dilution Risk from Convertibles/Warrants:** {risk}")
 
-    #Module 6: Historical Capital Raises
+    # Historical Capital Raises
     capital_raises = get_historical_capital_raises(cik)
     num_raises = len(capital_raises)
     st.subheader("6. Historical Capital Raises (last 18 months)")
@@ -841,30 +715,18 @@ if ticker:
             st.write(f"- Date: {raise_event['filing_date']} | Amount: {raise_event['amount'] or 'N/A'} | Filing: {raise_event['filing_type']}")
             with st.expander("Context"):
                 st.write(raise_event["context"])
-            
-    # 7. Dilution Pressure Score
-    st.subheader("8. Dilution Pressure Score")
-    st.caption("Combines cash runway, ATM capacity, dilution ability, and more to assess dilution risk.")
 
+    # Dilution Pressure Score
+    st.subheader("7. Dilution Pressure Score")
+    st.caption("Combines cash runway, ATM capacity, dilution ability, and more to assess dilution risk.")
     try:
-        # Make sure all variables exist
-        instruments = instruments if 'instruments' in locals() else []
-        raises = raises if 'raises' in locals() else []
-        available_dilution_shares = (authorized - outstanding) if authorized and outstanding else 0
-        convertible_total_usd = 2_000_000 if instruments else 0  # Or a better estimate!
-        num_raises_past_year = 0
-        if raises and isinstance(raises, list):
-            num_raises_past_year = len([
-                entry for entry in raises
-                if "date" in entry and datetime.strptime(entry["date"], "%Y-%m-%d") > datetime.now() - timedelta(days=365)
-            ])
         score = calculate_dilution_pressure_score(
             atm_capacity_usd=atm,
             authorized_shares=authorized,
             outstanding_shares=outstanding,
-            convertibles=convertible_total_usd,
-            capital_raises_past_year=num_raises_past_year,
-            cash_runway=runway if 'runway' in locals() else None,
+            convertibles=instruments,
+            capital_raises_past_year=num_raises,
+            cash_runway=runway_months,
             market_cap=market_cap
         )
         if score is not None:
