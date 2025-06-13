@@ -710,20 +710,59 @@ if ticker:
             st.warning("Could not estimate cash runway (missing data).")
         runway_months = cash_result.get('runway_months')
 
-    # ATM Offering Capacity
-    atm, atm_url, atm_details = get_atm_offering(cik, lookback=10)
+    # ATM Offering Capacity Section
     st.subheader("3. ATM / Committed Equity Facility Capacity")
+    
     if atm_details:
-        st.write(f"**ATM/Equity Facility Capacity:** ${atm:,.0f}" if atm else "ATM/Equity Facility found (amount not parsed)")
-        if atm_details["counterparty"]:
+        # Extract variables safely
+        has_active_atm = atm_details.get("active", atm is not None)
+        baby_shelf_applies = is_baby_shelf(market_cap)
+        try:
+            low_float = is_low_float(public_float, shares_outstanding=outstanding)
+        except Exception as e:
+            low_float = False
+            st.info("Could not determine low public float status.")
+        atm_total = atm
+        atm_remaining = atm_details.get("remaining")
+        has_shelf = atm_details.get("has_shelf", False)
+        shelf_unused = atm_details.get("shelf_unused", False)
+    
+        # ATM risk score
+        try:
+            atm_score = get_atm_capacity_score(
+                has_active_atm, baby_shelf_applies, low_float,
+                atm_remaining, atm_total, has_shelf, shelf_unused
+            )
+        except Exception as e:
+            atm_score = 0
+            st.warning(f"Could not compute ATM dilution risk score: {e}")
+    
+        st.write(
+            f"**ATM/Equity Facility Capacity:** ${atm:,.0f}" if atm else "ATM/Equity Facility found (amount not parsed)"
+        )
+        st.write(f"**Active ATM Program:** {'Yes' if has_active_atm else 'No'}")
+        st.write(f"**Baby Shelf Rule Applies:** {'Yes' if baby_shelf_applies else 'No'}")
+        st.write(f"**Low Public Float:** {'Yes' if low_float else 'No'}")
+        st.write(f"**Shelf Registration:** {'Yes' if has_shelf else 'No'}")
+        st.write(f"**Shelf Registered But Not Used:** {'Yes' if shelf_unused else 'No'}")
+        if atm_total:
+            st.write(f"**Total ATM Facility:** ${atm_total:,.0f}")
+            if atm_remaining is not None:
+                st.write(
+                    f"**ATM Remaining:** ${atm_remaining:,.0f} ({100 * atm_remaining / atm_total:.1f}% left)"
+                )
+            else:
+                st.write("**ATM Remaining:** Data not available")
+        if atm_details.get("counterparty"):
             st.write(f"**Counterparty:** {atm_details['counterparty']}")
         st.write(f"**Filing Type:** {atm_details['filing_type']}  |  **Date:** {atm_details['filing_date']}")
         st.markdown(f"[Source Document]({atm_url})")
         with st.expander("Context excerpt from filing"):
             st.write(atm_details["context"])
+        st.write(f"**Dilution Risk Score (ATM/Shelf): {atm_score} / 25**")
     else:
         st.write("No ATM/Equity Facility or Committed Equity Financing found in recent filings.")
-
+        
     # Offering Ability
     data = estimate_offering_ability(cik, ticker)
     st.subheader("4. Offering Ability")
@@ -769,7 +808,7 @@ if ticker:
     st.caption("Combines cash runway, ATM capacity, dilution ability, and more to assess dilution risk.")
     try:
         score = calculate_dilution_pressure_score(
-            atm_capacity_usd=atm,
+            atm_score=atm_score,
             authorized_shares=authorized,
             outstanding_shares=outstanding,
             convertibles=instruments,
@@ -789,5 +828,3 @@ if ticker:
             st.write("Insufficient data to calculate score.")
     except Exception as e:
         st.error(f"Error calculating score: {e}")
-else:
-    st.warning("Please enter a stock ticker to begin analysis.")
