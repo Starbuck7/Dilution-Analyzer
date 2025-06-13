@@ -249,6 +249,26 @@ def get_atm_offering(cik, lookback=10):
         return best["amount_usd"], best["filing_url"], best
     return None, None, None
 
+def is_baby_shelf(market_cap, threshold=75_000_000):
+    """Returns True if the company is subject to the Baby Shelf rule (<$75M market cap)."""
+    return market_cap is not None and market_cap < threshold
+
+def is_low_float(public_float, shares_outstanding=None, market_cap=None, float_threshold=0.10):
+    """Returns True if public float is below threshold (default: 10% of shares outstanding)."""
+    if shares_outstanding and public_float:
+        return (public_float / shares_outstanding) < float_threshold
+    elif market_cap and public_float:
+        return (public_float / market_cap) < float_threshold
+    return False
+
+def atm_remaining_ratio(atm_remaining, atm_total):
+    """Returns ratio of ATM remaining."""
+    if atm_total in [None, 0]:
+        return 0
+    if atm_remaining is None:
+        return 0
+    return atm_remaining / atm_total
+
 # ===================== Module 4: Offering Ability =====================
 AUTHORIZED_PATTERNS = [
     r"authorized[\s\-]*shares[^:\d]*[:\s]*([\d,]+)",
@@ -556,20 +576,41 @@ def get_historical_capital_raises(cik, months=18, filings_to_check=20):
     return results
 
 # ===================== Module 7: Dilution Pressure Score =====================
-def get_atm_capacity_score(atm_capacity_usd, market_cap):
-    if not atm_capacity_usd or not market_cap:
-        return 10
-    ratio = atm_capacity_usd / market_cap
-    if ratio > 0.75:
-        return 25
-    elif ratio > 0.5:
-        return 20
-    elif ratio > 0.25:
-        return 15
-    elif ratio > 0.1:
-        return 10
-    else:
-        return 5
+def get_atm_capacity_score(
+    has_active_atm, 
+    baby_shelf_applies, 
+    low_float, 
+    atm_remaining, 
+    atm_total, 
+    has_shelf, 
+    shelf_unused
+):
+    """
+    Returns an ATM/shelf dilution risk score according to the new rules.
+    """
+    try:
+        ratio = atm_remaining_ratio(atm_remaining, atm_total)
+        high_atm = ratio > 0.5  # You can adjust this threshold
+
+        # 1. Has active ATM, Baby Shelf applies, and Low float
+        if has_active_atm and baby_shelf_applies and low_float:
+            return 25
+        # 2. Has shelf and high ATM remaining
+        elif has_shelf and high_atm:
+            return 20
+        # 3. Shelf filed but not yet used
+        elif has_shelf and shelf_unused:
+            return 15
+        # 4. Relatively low ATM remaining
+        elif has_active_atm and not high_atm:
+            return 10
+        # 5. No ATM or shelf
+        else:
+            return 0
+    except Exception as e:
+        # Log error, fallback to lowest risk
+        print(f"[ATM Score Error] {e}")
+        return 0
 
 def get_authorized_vs_outstanding_score(authorized, outstanding, market_cap=None):
     if authorized is None or outstanding is None or authorized == 0:
