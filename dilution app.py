@@ -711,8 +711,13 @@ if ticker:
         runway_months = cash_result.get('runway_months')
 
     # ATM Offering Capacity Section
+    atm = atm_url = atm_details = None
+    try:
+        atm, atm_url, atm_details = get_atm_offering(cik, lookback=10)
+    except Exception as e:
+        st.warning(f"Could not fetch ATM offering details: {e}")
     st.subheader("3. ATM / Committed Equity Facility Capacity")
-    
+
     if atm_details:
         # Extract variables safely
         has_active_atm = atm_details.get("active", atm is not None)
